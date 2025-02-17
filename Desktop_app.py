@@ -55,6 +55,21 @@ class NoGoZoneApp:
         self.save_button.pack(side=tk.RIGHT, padx=5)
         self.save_button.bind("<Enter>", lambda e: self.show_tooltip("Click to save the map with added zones."))
         self.save_button.bind("<Leave>", lambda e: self.hide_tooltip())
+
+        self.save_map_button = tk.Button(self.bottom_frame, text="Save Map", command=self.run_ros_package2)
+        self.save_map_button.pack(side=tk.RIGHT, padx=5)
+        self.save_map_button.bind("<Enter>", lambda e: self.show_tooltip("Click to save the created map."))
+        self.save_map_button.bind("<Leave>", lambda e: self.hide_tooltip())
+
+        self.configure_button = tk.Button(self.bottom_frame, text="Configure", command=self.run_ros_pachage)
+        self.configure_button.pack(side=tk.RIGHT, padx=5)
+        self.configure_button.bind("<Enter>", lambda e: self.show_tooltip("Click to start the robot configuration process."))
+        self.configuree_button.bind("<Leave>", lambda e: self.hide_tooltip())
+
+        self.done_button = tk.Button(self.bottom_frame, text="Done", command=self.start_recognsion)
+        self.done_button.pack(side=tk.LEFT, padx=5)
+        self.done_button.bind("<Enter>", lambda e: self.show_tooltip("Click to start the robot."))
+        self.done_button.bind("<Leave>", lambda e: self.hide_tooltip())
         
         self.tooltip = tk.Label(self.root, text="", bg="yellow", fg="black", relief=tk.SOLID, borderwidth=1)
         self.tooltip.pack_forget()
