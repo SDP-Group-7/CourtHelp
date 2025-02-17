@@ -15,32 +15,49 @@ class NoGoZoneApp:
         self.root.title("Court Help No-Go Zone Implementation")
         self.root.geometry("800x600")
         
+        # Create a frame for control buttons on the right side
+        self.control_frame = tk.Frame(self.root)
+        self.control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+        
+        self.no_go_button = tk.Button(self.control_frame, text="Draw No-Go Zone", fg="red", command=self.set_no_go_mode)
+        self.no_go_button.pack(fill=tk.X, pady=2)
+        self.no_go_button.bind("<Enter>", lambda e: self.show_tooltip("Click to draw a no-go zone (red rectangle)."))
+        self.no_go_button.bind("<Leave>", lambda e: self.hide_tooltip())
+        
+        self.home_zone_button = tk.Button(self.control_frame, text="Draw Home Zone", fg="blue", command=self.set_home_zone_mode)
+        self.home_zone_button.pack(fill=tk.X, pady=2)
+        self.home_zone_button.bind("<Enter>", lambda e: self.show_tooltip("Click to draw a home zone (blue rectangle)."))
+        self.home_zone_button.bind("<Leave>", lambda e: self.hide_tooltip())
+        
+        self.delete_all_button = tk.Button(self.control_frame, text="Delete All Zones", command=self.delete_all_zones)
+        self.delete_all_button.pack(fill=tk.X, pady=2)
+        self.delete_all_button.bind("<Enter>", lambda e: self.show_tooltip("Click to delete all zones from the map."))
+        self.delete_all_button.bind("<Leave>", lambda e: self.hide_tooltip())
+        
+        self.edit_zone_button = tk.Button(self.control_frame, text="Edit Zones (Move/Resize)", command=self.enable_edit_mode)
+        self.edit_zone_button.pack(fill=tk.X, pady=2)
+        self.edit_zone_button.bind("<Enter>", lambda e: self.show_tooltip("Click to enable edit mode. Drag to move, resize by dragging edges."))
+        self.edit_zone_button.bind("<Leave>", lambda e: self.hide_tooltip())
+        
         self.canvas = Canvas(self.root, bg='white')
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        self.load_map_button = tk.Button(self.root, text="Load Map", command=self.load_map)
-        self.load_map_button.pack()
+        # Create a frame for load and save buttons at the bottom
+        self.bottom_frame = tk.Frame(self.root)
+        self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         
-        self.no_go_button = tk.Button(self.root, text="Draw No-Go Zone", command=self.set_no_go_mode)
-        self.no_go_button.pack()
+        self.load_map_button = tk.Button(self.bottom_frame, text="Load Map", command=self.load_map)
+        self.load_map_button.pack(side=tk.LEFT, padx=5)
+        self.load_map_button.bind("<Enter>", lambda e: self.show_tooltip("Click to load a map image."))
+        self.load_map_button.bind("<Leave>", lambda e: self.hide_tooltip())
         
-        self.home_zone_button = tk.Button(self.root, text="Draw Home Zone", command=self.set_home_zone_mode)
-        self.home_zone_button.pack()
+        self.save_button = tk.Button(self.bottom_frame, text="Save Map with Zones", command=self.save_map_with_zones)
+        self.save_button.pack(side=tk.RIGHT, padx=5)
+        self.save_button.bind("<Enter>", lambda e: self.show_tooltip("Click to save the map with added zones."))
+        self.save_button.bind("<Leave>", lambda e: self.hide_tooltip())
         
-        self.save_button = tk.Button(self.root, text="Save Map with Zones", command=self.save_map_with_zones)
-        self.save_button.pack()
-
-        self.save_button = tk.Button(self.root, text="Configure", command=self.run_ros_package)
-        self.save_button.pack()
-
-        self.save_button = tk.Button(self.root, text="Save map", command=self.run_ros_package2)
-        self.save_button.pack()
-
-        self.done_button = tk.Button(self.root, text="Done", command=self.start_recognision)
-        self.done_button.pack()
-        
-        self.instructions_label = tk.Label(self.root, text="Instructions:\n1. Load a map image.\n2. Click and drag to create no-go or home zones.\n3. Use the respective buttons to switch between zones.\n4. Right-click a zone to delete it.\n5. Only one home zone can be created.")
-        self.instructions_label.pack()
+        self.tooltip = tk.Label(self.root, text="", bg="yellow", fg="black", relief=tk.SOLID, borderwidth=1)
+        self.tooltip.pack_forget()
         
         self.rectangles = []  # Stores rectangle objects
         self.no_go_zones = []  # Stores coordinates of no-go zones
@@ -53,71 +70,111 @@ class NoGoZoneApp:
         self.map_image = None
         self.tk_map = None
         self.mode = "no_go"
+        self.selected_rectangle = None
+        self.selected_corner = None
+        self.edit_mode = False
         
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
         self.canvas.bind("<ButtonPress-3>", self.on_right_click)  # Right-click to delete zones
+        self.canvas.bind("<Motion>", self.on_motion)  # Detect hovering over corners
+
+    def show_tooltip(self, text):
+        self.tooltip.config(text=text)
+        self.tooltip.place(x=10, y=10)
+    
+    def hide_tooltip(self):
+        self.tooltip.place_forget()
         
     def set_no_go_mode(self):
         self.mode = "no_go"
+        self.edit_mode = False
         
     def set_home_zone_mode(self):
         self.mode = "home"
+        self.edit_mode = False
+        
+    def enable_edit_mode(self):
+        self.edit_mode = True
+    
+    def delete_all_zones(self):
+        for rect in self.rectangles:
+            self.canvas.delete(rect)
+        self.rectangles.clear()
+        self.no_go_zones.clear()
+        if self.home_rectangle:
+            self.canvas.delete(self.home_rectangle)
+            self.home_rectangle = None
+            self.home_zone = None
         
     def load_map(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.pgm")])
+        file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")])
         if file_path:
-            if file_path.endswith(".pgm"):
-                # Read PGM using numpy (works for both ASCII and binary PGM)
-                with open(file_path, 'rb') as f:
-                    pgm_image = Image.open(f)
-                    pgm_image = pgm_image.convert("L")  # Convert to grayscale
-
-                self.map_image = pgm_image.resize((800, 500))  # Resize for display
-            else:
-                self.map_image = Image.open(file_path)
-                self.map_image = self.map_image.resize((800, 500))  # Resize for display
-            
+            self.map_image = Image.open(file_path)
+            self.map_image = self.map_image.resize((800, 500))
             self.tk_map = ImageTk.PhotoImage(self.map_image)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_map)
-            
+        
+    def on_motion(self, event):
+        for rect in self.rectangles:
+            x1, y1, x2, y2 = self.canvas.coords(rect)
+            if abs(event.x - x1) < 5 or abs(event.x - x2) < 5 or abs(event.y - y1) < 5 or abs(event.y - y2) < 5:
+                self.canvas.config(cursor="plus")  # Resize cursor
+                return
+            elif x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                self.canvas.config(cursor="fleur")  # Move cursor
+                return
+        self.canvas.config(cursor="")
+        
     def on_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
-        color = "blue" if self.mode == "home" else "red"
-        self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, event.x, event.y, outline=color, width=2)
+        if self.edit_mode:
+            for rect in self.rectangles:
+                x1, y1, x2, y2 = self.canvas.coords(rect)
+                if abs(event.x - x1) < 5 or abs(event.x - x2) < 5 or abs(event.y - y1) < 5 or abs(event.y - y2) < 5:
+                    self.selected_rectangle = rect
+                    self.resizing = True
+                    return
+                if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                    self.selected_rectangle = rect
+                    self.start_x = event.x
+                    self.start_y = event.y
+                    self.dragging = True
+                    return
+        else:
+            self.start_x = event.x
+            self.start_y = event.y
+            color = "blue" if self.mode == "home" else "red"
+            rect = self.canvas.create_rectangle(self.start_x, self.start_y, event.x, event.y, outline=color, width=2)
+            self.rectangles.append(rect)
         
     def on_drag(self, event):
-        self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
+        if self.edit_mode and self.selected_rectangle:
+            if self.resizing:
+                x1, y1, x2, y2 = self.canvas.coords(self.selected_rectangle)
+                self.canvas.coords(self.selected_rectangle, x1, y1, event.x, event.y)
+            elif self.dragging:
+                step_x = event.x - self.start_x
+                step_y = event.y - self.start_y
+                self.canvas.move(self.selected_rectangle, step_x, step_y)
+                self.start_x = event.x
+                self.start_y = event.y
+        elif not self.edit_mode and self.rectangles:
+            last_rect = self.rectangles[-1]
+            self.canvas.coords(last_rect, self.start_x, self.start_y, event.x, event.y)
         
     def on_release(self, event):
-        end_x, end_y = event.x, event.y
-        if self.mode == "no_go":
-            self.no_go_zones.append({"x1": self.start_x, "y1": self.start_y, "x2": end_x, "y2": end_y})
-            self.rectangles.append(self.rect)
-        elif self.mode == "home":
-            if self.home_rectangle:
-                self.canvas.delete(self.home_rectangle)
-            center_x = (self.start_x + end_x) // 2
-            center_y = (self.start_y + end_y) // 2
-            self.home_zone = {"x": center_x, "y": center_y}
-            self.home_rectangle = self.rect
+        self.selected_rectangle = None
+        self.dragging = False
+        self.resizing = False
         
     def on_right_click(self, event):
-        for i, rect in enumerate(self.rectangles):
-            coords = self.canvas.coords(rect)
-            if coords[0] <= event.x <= coords[2] and coords[1] <= event.y <= coords[3]:
+        for rect in self.rectangles:
+            x1, y1, x2, y2 = self.canvas.coords(rect)
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 self.canvas.delete(rect)
-                del self.rectangles[i]
-                del self.no_go_zones[i]
+                self.rectangles.remove(rect)
                 return
-        if self.home_rectangle:
-            coords = self.canvas.coords(self.home_rectangle)
-            if coords[0] <= event.x <= coords[2] and coords[1] <= event.y <= coords[3]:
-                self.canvas.delete(self.home_rectangle)
-                self.home_rectangle = None
-                self.home_zone = None
         
     def save_map_with_zones(self):
         if self.map_image is None:
