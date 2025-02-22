@@ -13,7 +13,7 @@ class NoGoZoneApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Court Help No-Go Zone Implementation")
-        self.root.geometry("800x600")
+        self.root.state("zoomed")
         
         # Create a frame for control buttons on the right side
         self.control_frame = tk.Frame(self.root)
@@ -123,13 +123,13 @@ class NoGoZoneApp:
             self.home_rectangle = None
             self.home_zone = None
         
-    def load_map(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")])
+     def load_map(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.pgm")])
         if file_path:
             self.map_image = Image.open(file_path)
-            self.map_image = self.map_image.resize((800, 500))
+            self.map_image = self.map_image.resize((self.canvas.winfo_width(), self.canvas.winfo_height()))
             self.tk_map = ImageTk.PhotoImage(self.map_image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_map)
+            self.canvas.create_image(self.canvas.winfo_width() // 2, self.canvas.winfo_height() // 2, anchor=tk.CENTER, image=self.tk_map)
         
     def on_motion(self, event):
         for rect in self.rectangles:
