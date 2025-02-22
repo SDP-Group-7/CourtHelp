@@ -1,5 +1,5 @@
 iimport tkinter as tk
-from tkinter import filedialog, Canvas
+from tkinter import filedialog, Canvas, messagebox
 from PIL import Image, ImageTk, ImageDraw
 import json
 import subprocess
@@ -88,12 +88,25 @@ class NoGoZoneApp:
         self.selected_rectangle = None
         self.selected_corner = None
         self.edit_mode = False
+        self.dragging = False
+        self.resizing = False
         
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
         self.canvas.bind("<ButtonPress-3>", self.on_right_click)  # Right-click to delete zones
         self.canvas.bind("<Motion>", self.on_motion)  # Detect hovering over corners
+
+    def show_warning(self, message):
+        """ Show a warning popup with an 'OK' button. """
+        messagebox.showwarning("Warning", message)
+
+    def check_map_loaded(self):
+        """ Check if a map is loaded before allowing actions. """
+        if self.map_image is None:
+            self.show_warning("Please load a map before performing this action.")
+            return False
+        return True
 
     def show_tooltip(self, text):
         self.tooltip.config(text=text)
@@ -103,17 +116,25 @@ class NoGoZoneApp:
         self.tooltip.place_forget()
         
     def set_no_go_mode(self):
+        if not self.check_map_loaded():
+            return
         self.mode = "no_go"
         self.edit_mode = False
         
     def set_home_zone_mode(self):
+        if not self.check_map_loaded():
+            return
         self.mode = "home"
         self.edit_mode = False
         
     def enable_edit_mode(self):
+        if not self.check_map_loaded():
+            return
         self.edit_mode = True
     
     def delete_all_zones(self):
+        if not self.check_map_loaded():
+            return
         for rect in self.rectangles:
             self.canvas.delete(rect)
         self.rectangles.clear()
@@ -123,13 +144,14 @@ class NoGoZoneApp:
             self.home_rectangle = None
             self.home_zone = None
         
-     def load_map(self):
+    def load_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.pgm")])
         if file_path:
             self.map_image = Image.open(file_path)
             self.map_image = self.map_image.resize((self.canvas.winfo_width(), self.canvas.winfo_height()))
             self.tk_map = ImageTk.PhotoImage(self.map_image)
             self.canvas.create_image(self.canvas.winfo_width() // 2, self.canvas.winfo_height() // 2, anchor=tk.CENTER, image=self.tk_map)
+
         
     def on_motion(self, event):
         for rect in self.rectangles:
@@ -143,30 +165,32 @@ class NoGoZoneApp:
         self.canvas.config(cursor="")
         
     def on_press(self, event):
+        if not self.check_map_loaded():
+            return
         if self.edit_mode:
-            for rect in self.rectangles:
+            for rect in reversed(self.rectangles):
                 x1, y1, x2, y2 = self.canvas.coords(rect)
-                if abs(event.x - x1) < 5 or abs(event.x - x2) < 5 or abs(event.y - y1) < 5 or abs(event.y - y2) < 5:
-                    self.selected_rectangle = rect
-                    self.resizing = True
-                    return
                 if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                     self.selected_rectangle = rect
-                    self.start_x = event.x
-                    self.start_y = event.y
+                    self.start_x, self.start_y = event.x, event.y
                     self.dragging = True
                     return
         else:
-            self.start_x = event.x
-            self.start_y = event.y
-            color = "blue" if self.mode == "home" else "red"
-            rect = self.canvas.create_rectangle(self.start_x, self.start_y, event.x, event.y, outline=color, width=2)
-            self.rectangles.append(rect)
-        
+            if self.mode == "no_go":
+                self.start_x, self.start_y = event.x, event.y
+                rect = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, fill="black", outline="black")
+                self.rectangles.append(rect)
+                self.no_go_zones.append((self.start_x, self.start_y, self.start_x, self.start_y))
+            elif self.mode == "home":
+                if self.home_rectangle:
+                    self.canvas.delete(self.home_rectangle)
+                self.home_zone = (event.x, event.y)
+                self.home_rectangle = self.canvas.create_oval(event.x-10, event.y-10, event.x+10, event.y+10, fill="blue", outline="blue")
+
     def on_drag(self, event):
         if self.edit_mode and self.selected_rectangle:
+            x1, y1, x2, y2 = self.canvas.coords(self.selected_rectangle)
             if self.resizing:
-                x1, y1, x2, y2 = self.canvas.coords(self.selected_rectangle)
                 self.canvas.coords(self.selected_rectangle, x1, y1, event.x, event.y)
             elif self.dragging:
                 step_x = event.x - self.start_x
@@ -174,14 +198,12 @@ class NoGoZoneApp:
                 self.canvas.move(self.selected_rectangle, step_x, step_y)
                 self.start_x = event.x
                 self.start_y = event.y
-        elif not self.edit_mode and self.rectangles:
-            last_rect = self.rectangles[-1]
-            self.canvas.coords(last_rect, self.start_x, self.start_y, event.x, event.y)
+        elif not self.edit_mode and self.mode == "no_go":
+            self.canvas.coords(self.rectangles[-1], self.start_x, self.start_y, event.x, event.y)
         
     def on_release(self, event):
         self.selected_rectangle = None
         self.dragging = False
-        self.resizing = False
         
     def on_right_click(self, event):
         for rect in self.rectangles:
@@ -189,26 +211,44 @@ class NoGoZoneApp:
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 self.canvas.delete(rect)
                 self.rectangles.remove(rect)
+                self.no_go_zones.remove((x1, y1, x2, y2))
                 return
         
     def save_map_with_zones(self):
-        if self.map_image is None:
+        if not self.check_map_loaded():
+            return
+        
+        if not self.rectangles and self.home_zone is None:
+            self.show_warning("No changes have been made to the map. Add at least one zone before saving.")
             return
         
         annotated_map = self.map_image.copy()
         draw = ImageDraw.Draw(annotated_map)
         
-        for zone in self.no_go_zones:
-            draw.rectangle([zone['x1'], zone['y1'], zone['x2'], zone['y2']], outline="red", width=3)
+        for rect in self.rectangles:
+            x1, y1, x2, y2 = self.canvas.coords(rect)
+            draw.rectangle([x1, y1, x2, y2], fill="black", outline="black")
         
         if self.home_zone:
-            draw.ellipse([(self.home_zone['x']-5, self.home_zone['y']-5),
-                          (self.home_zone['x']+5, self.home_zone['y']+5)], fill="blue", outline="blue")
+            x, y = self.home_zone
+            draw.ellipse([x-10, y-10, x+10, y+10], fill="blue", outline="blue")
         
-        file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PGM Files", "*.pgm")])
+        file_path = filedialog.asksaveasfilename(defaultextension=".pgm", filetypes=[("PGM Files", "*.pgm")])
         if file_path:
             annotated_map.save(file_path)
-        print("Map with zones saved.")
+        
+        # Generate YAML file
+        yaml_content = f"""image: {file_path}
+resolution: 0.05
+origin: [0.0, 0.0, 0.0]
+occupied_thresh: 0.65
+free_thresh: 0.196
+negate: 0
+"""
+        yaml_path = file_path.replace(".pgm", ".yaml")
+        with open(yaml_path, "w") as yaml_file:
+            yaml_file.write(yaml_content)
+        print("Map and YAML file saved.")
 
     def run_ros_package(self):
         try:
