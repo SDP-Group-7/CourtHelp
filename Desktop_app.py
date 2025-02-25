@@ -1,4 +1,5 @@
 import tkinter as tk
+import tkinter.ttk as ttk
 from tkinter import filedialog, Canvas, messagebox
 from PIL import Image, ImageTk, ImageDraw
 
@@ -6,67 +7,43 @@ import backend
 
 class NoGoZoneApp:
     def __init__(self, root):
+        def __init__(self, root):
         self.root = root
-        self.root.title("Court Help No-Go Zone Implementation")
-        self.root.state("zoomed")
+        self.root.title("Setting up your CourtHelp robot")
+        self.root.state("normal")
         
-        # Create a frame for control buttons on the right side
-        self.control_frame = tk.Frame(self.root)
-        self.control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+        # Create a frame for control buttons on the left side
+        self.control_frame = tk.Frame(self.root, bg=PANEL_BG)
+        self.control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5, ipadx=5, ipady=5)
+        button_panel_title = tk.Label(self.control_frame, text="Setting up your robot", bg="yellow", fg="black", relief=tk.FLAT, borderwidth=1, font=('TkDefaultFont', 13))
+        button_panel_title.pack(fill=tk.X, pady=5,)
+
+        self.custom_step_label(self.control_frame, "Step 1: Load Map")
+        self.load_map_button = self.custom_button(self.control_frame, text="Load Map", command=self.load_map, tooltip="Load the .pgm map from the robot.")
+
+        self.custom_step_label(self.control_frame,"Step 2: Mark Map")
+        self.no_go_button= self.custom_button(self.control_frame, text="Draw No-Go Zone",command=self.set_no_go_mode, tooltip="Click and drag then release to draw a No-Go zone (black rectangle). Right click a the zone to delete.\n A No-Go Zone is an area the robot is forbidden from entering such as the benches for players, an open door or other obstacles too high or low for the LIDAR sensor to detect.")
+        self.home_zone_button = self.custom_button(self.control_frame, text="Draw Home Zone", command=self.set_home_zone_mode, tooltip="Click position to place a Home zone (blue circle). The robot returns to the home zone after collecting all balls. There must be exactly 1 home zone in the map.") 
+        self.delete_all_button = self.custom_button(self.control_frame, text="Delete All Zones", command=self.delete_all_zones, tooltip="Click to delete all No-Go and Home zones from the map.")
+        self.edit_zone_button = self.custom_button(self.control_frame, text="Edit Zones (Move/Resize)", command=self.enable_edit_mode, tooltip="Click to enable edit mode. Drag center of No-Go or Home zones to move them and hover over edges of No-Go zones until you see a cross then drag to extend them")
         
-        self.no_go_button = tk.Button(self.control_frame, text="Draw No-Go Zone", fg="red", command=self.set_no_go_mode)
-        self.no_go_button.pack(fill=tk.X, pady=2)
-        self.no_go_button.bind("<Enter>", lambda e: self.show_tooltip("Click to draw a no-go zone (red rectangle)."))
-        self.no_go_button.bind("<Leave>", lambda e: self.hide_tooltip())
-        
-        self.home_zone_button = tk.Button(self.control_frame, text="Draw Home Zone", fg="blue", command=self.set_home_zone_mode)
-        self.home_zone_button.pack(fill=tk.X, pady=2)
-        self.home_zone_button.bind("<Enter>", lambda e: self.show_tooltip("Click to draw a home zone (blue rectangle)."))
-        self.home_zone_button.bind("<Leave>", lambda e: self.hide_tooltip())
-        
-        self.delete_all_button = tk.Button(self.control_frame, text="Delete All Zones", command=self.delete_all_zones)
-        self.delete_all_button.pack(fill=tk.X, pady=2)
-        self.delete_all_button.bind("<Enter>", lambda e: self.show_tooltip("Click to delete all zones from the map."))
-        self.delete_all_button.bind("<Leave>", lambda e: self.hide_tooltip())
-        
-        self.edit_zone_button = tk.Button(self.control_frame, text="Edit Zones (Move/Resize)", command=self.enable_edit_mode)
-        self.edit_zone_button.pack(fill=tk.X, pady=2)
-        self.edit_zone_button.bind("<Enter>", lambda e: self.show_tooltip("Click to enable edit mode. Drag to move, resize by dragging edges."))
-        self.edit_zone_button.bind("<Leave>", lambda e: self.hide_tooltip())
-        
+        self.custom_step_label(self.control_frame,"Step 3: Save Map")
+        self.save_button = self.custom_button(self.control_frame, text="Save Map with Zones", command=self.save_map_with_zones, tooltip="Save the map with added zones.")
+
+        self.save_map_button = self.custom_button(self.control_frame, text="Save Map", command=self.run_ros_package2, tooltip="Save map created by robot")
+
+        self.configure_button = self.custom_button(self.control_frame, text="Configure", command=self.run_ros_package, tooltip="Start robot configuration")
+
+        self.done_button = self.custom_button(self.control_frame, text="Done", command=self.start_recognision, tooltip="Start robot")
+
         self.canvas = Canvas(self.root, bg='white')
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        # Create a frame for load and save buttons at the bottom
+        # Create bottom border
         self.bottom_frame = tk.Frame(self.root)
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         
-        self.load_map_button = tk.Button(self.bottom_frame, text="Load Map", command=self.load_map)
-        self.load_map_button.pack(side=tk.LEFT, padx=5)
-        self.load_map_button.bind("<Enter>", lambda e: self.show_tooltip("Click to load a map image."))
-        self.load_map_button.bind("<Leave>", lambda e: self.hide_tooltip())
-        
-        self.save_button = tk.Button(self.bottom_frame, text="Save Map with Zones", command=self.save_map_with_zones)
-        self.save_button.pack(side=tk.RIGHT, padx=5)
-        self.save_button.bind("<Enter>", lambda e: self.show_tooltip("Click to save the map with added zones."))
-        self.save_button.bind("<Leave>", lambda e: self.hide_tooltip())
-
-        self.save_map_button = tk.Button(self.bottom_frame, text="Save Map", command=backend.run_ros_package2)
-        self.save_map_button.pack(side=tk.RIGHT, padx=5)
-        self.save_map_button.bind("<Enter>", lambda e: self.show_tooltip("Click to save the created map."))
-        self.save_map_button.bind("<Leave>", lambda e: self.hide_tooltip())
-
-        self.configure_button = tk.Button(self.bottom_frame, text="Configure", command=backend.run_ros_package)
-        self.configure_button.pack(side=tk.RIGHT, padx=5)
-        self.configure_button.bind("<Enter>", lambda e: self.show_tooltip("Click to start the robot configuration process."))
-        self.configure_button.bind("<Leave>", lambda e: self.hide_tooltip())
-
-        self.done_button = tk.Button(self.bottom_frame, text="Done", command=backend.enter_operation_mode)
-        self.done_button.pack(side=tk.LEFT, padx=5)
-        self.done_button.bind("<Enter>", lambda e: self.show_tooltip("Click to start the robot."))
-        self.done_button.bind("<Leave>", lambda e: self.hide_tooltip())
-        
-        self.tooltip = tk.Label(self.root, text="", bg="yellow", fg="black", relief=tk.SOLID, borderwidth=1)
+        self.tooltip = tk.Label(self.root, text="", bg="yellow", fg="black", relief=tk.SOLID, borderwidth=1, font=('TkDefaultFont', 11))
         self.tooltip.pack_forget()
         
         self.rectangles = []  # Stores rectangle objects
@@ -85,12 +62,30 @@ class NoGoZoneApp:
         self.edit_mode = False
         self.dragging = False
         self.resizing = False
+        self.cursor_mode="arrow"
+        self.canvas.config(cursor=self.cursor_mode)
         
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
         self.canvas.bind("<ButtonPress-3>", self.on_right_click)  # Right-click to delete zones
         self.canvas.bind("<Motion>", self.on_motion)  # Detect hovering over corners
+
+    def custom_button(self, control_frame, text, command, tooltip):
+        button = ttk.Button(master=control_frame,
+                        text=text,
+                        command=command,
+                        style='standard.TButton'
+                        )
+        button.pack(fill=tk.BOTH, ipady=5, pady=3, padx=10,)
+        button.bind("<Enter>", lambda e: self.show_tooltip(tooltip))
+        button.bind("<Leave>", lambda e: self.hide_tooltip())
+        return button
+    
+    def custom_step_label(self, control_frame, msg):
+        step1 = tk.Label(control_frame, text=msg, anchor="w", fg="white",bg=PANEL_BG, relief=tk.FLAT, borderwidth=1, font=('TkDefaultFont', 13))
+        step1.pack(fill=tk.X, pady=5, padx=2)
+
 
     def show_warning(self, message):
         """ Show a warning popup with an 'OK' button. """
@@ -105,7 +100,7 @@ class NoGoZoneApp:
 
     def show_tooltip(self, text):
         self.tooltip.config(text=text)
-        self.tooltip.place(x=10, y=10)
+        self.tooltip.place(x=240, y=10)
     
     def hide_tooltip(self):
         self.tooltip.place_forget()
@@ -114,6 +109,7 @@ class NoGoZoneApp:
         if not self.check_map_loaded():
             return
         self.mode = "no_go"
+        self.cursor_mode = "tcross"
         self.edit_mode = False
         
     def set_home_zone_mode(self):
@@ -121,11 +117,13 @@ class NoGoZoneApp:
             return
         self.mode = "home"
         self.edit_mode = False
+        self.cursor_mode = "circle"
         
     def enable_edit_mode(self):
         if not self.check_map_loaded():
             return
         self.edit_mode = True
+        self.cursor_mode = "arrow"
     
     def delete_all_zones(self):
         if not self.check_map_loaded():
@@ -138,9 +136,11 @@ class NoGoZoneApp:
             self.canvas.delete(self.home_rectangle)
             self.home_rectangle = None
             self.home_zone = None
+        self.cursor_mode = "arrow"
         
     def load_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.pgm")])
+        self.cursor_mode = "arrow"
         if file_path:
             self.map_image = Image.open(file_path)
             self.map_image = self.map_image.resize((self.canvas.winfo_width(), self.canvas.winfo_height()))
@@ -151,13 +151,15 @@ class NoGoZoneApp:
     def on_motion(self, event):
         for rect in self.rectangles:
             x1, y1, x2, y2 = self.canvas.coords(rect)
+            # if cursor near a no-go zone set cursor to cross
             if abs(event.x - x1) < 5 or abs(event.x - x2) < 5 or abs(event.y - y1) < 5 or abs(event.y - y2) < 5:
-                self.canvas.config(cursor="plus")  # Resize cursor
+                self.canvas.config(cursor="cross")  # Resize cursor
                 return
-            elif x1 <= event.x <= x2 and y1 <= event.y <= y2:
+            # if cursor within a no-go zone and in edit more set cursor to "fleur"
+            elif self.edit_mode and x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 self.canvas.config(cursor="fleur")  # Move cursor
                 return
-        self.canvas.config(cursor="")
+        self.canvas.config(cursor=self.cursor_mode)
         
     def on_press(self, event):
         if not self.check_map_loaded():
@@ -208,13 +210,13 @@ class NoGoZoneApp:
                 self.rectangles.remove(rect)
                 self.no_go_zones.remove((x1, y1, x2, y2))
                 return
-        
+
     def save_map_with_zones(self):
         if not self.check_map_loaded():
             return
-        
-        if not self.rectangles and self.home_zone is None:
-            self.show_warning("No changes have been made to the map. Add at least one zone before saving.")
+        # A map can have 0 no-go zones but must have a home zone
+        if self.home_zone is None:
+            self.show_warning("Please mark exactly one Home zone on the map before saving.")
             return
         
         annotated_map = self.map_image.copy()
