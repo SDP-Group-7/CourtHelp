@@ -4,6 +4,8 @@ import os
 import time
 import cv2
 import numpy as np
+import pyIR
+import threading
 
 
 class VideoCaptureObj:
@@ -17,7 +19,31 @@ class VideoCaptureObj:
         cv2.destroyAllWindows()
 
 
+class RemotePressError(Exception):
+    def __init__(self, remotecode, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.remcode = remotecode
+
+
+class RemoteHandler(threading.Thread):
+    def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._receiver = pyIR.Receiver(pin)
+        relf._receiver.addRemote(pyIR.loadRemote(remotefile))
+        self.result = None
+        
+    def run(self):
+        self.result = self._receiver.listen()
+
+    def join(self):
+        threading.Thread.join(self)
+
+    def reset(self):
+        self.result = None
+
+
 def run_ros_package():
+    """triggers SLAM and the motiopns"""
     try:
         subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
 
@@ -28,6 +54,7 @@ def run_ros_package():
 
 
 def run_ros_package2():
+    """saves map in current directory and closes stuff"""
     try:
         print("Checking if ROS map server is ready...")
         time.sleep(5)
@@ -38,7 +65,7 @@ def run_ros_package2():
 
 
 
-def start_recognition(self):
+def start_recognition(remotehand):
     try:
         model = YOLO('yolov9e-seg.pt')  # Path to YOLO model
     except Exception as e:
@@ -100,8 +127,30 @@ def start_recognition(self):
 
             cv2.imshow("Ball Detection (Live)", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+                raise Exception
 
+            if not remotehand.is_alive():
+                pressed = remotehand.result
+                remotehand.join()
+                raise RemotePressError(pressed)
+
+
+def enter_operation_mode():
+    rem_handle = RemoteHandler()
+    rem_handle.start()
+
+    try:
+        start_recognition()
+    except RemotePressError as exc:
+        if exc.remcode == "on":
+            pass
+        return
+        # what do we do when the button is pressed?? add later
+
+        
+        rem_handle = RemoteHandler()
+        rem_handle.start()
+        # then restart the remote
 
 if __name__ == "__main__":
     print("no!")
