@@ -14,8 +14,8 @@ class VideoCaptureObj:
         self.cap = cv2.VideoCapture(0)
         return self.cap
 
-    def __exit__(self):
-        cap.release()
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.cap.release()
         cv2.destroyAllWindows()
 
 
