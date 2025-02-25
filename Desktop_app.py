@@ -59,9 +59,9 @@ class NoGoZoneApp:
         self.configure_button = tk.Button(self.bottom_frame, text="Configure", command=backend.run_ros_package)
         self.configure_button.pack(side=tk.RIGHT, padx=5)
         self.configure_button.bind("<Enter>", lambda e: self.show_tooltip("Click to start the robot configuration process."))
-        self.configuree_button.bind("<Leave>", lambda e: self.hide_tooltip())
+        self.configure_button.bind("<Leave>", lambda e: self.hide_tooltip())
 
-        self.done_button = tk.Button(self.bottom_frame, text="Done", command=self.start_recognsion)
+        self.done_button = tk.Button(self.bottom_frame, text="Done", command=backend.enter_operation_mode)
         self.done_button.pack(side=tk.LEFT, padx=5)
         self.done_button.bind("<Enter>", lambda e: self.show_tooltip("Click to start the robot."))
         self.done_button.bind("<Leave>", lambda e: self.hide_tooltip())

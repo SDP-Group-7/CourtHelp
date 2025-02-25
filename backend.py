@@ -29,7 +29,7 @@ class RemoteHandler(threading.Thread):
     def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._receiver = pyIR.Receiver(pin)
-        relf._receiver.addRemote(pyIR.loadRemote(remotefile))
+        self._receiver.addRemote(pyIR.loadRemote(remotefile))
         self.result = None
         
     def run(self):
@@ -43,7 +43,7 @@ class RemoteHandler(threading.Thread):
 
 
 def run_ros_package():
-    """triggers SLAM and the motiopns"""
+    """triggers SLAM and the motions"""
     try:
         subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
 
@@ -140,7 +140,7 @@ def enter_operation_mode():
     rem_handle.start()
 
     try:
-        start_recognition()
+        start_recognition(rem_handle)
     except RemotePressError as exc:
         if exc.remcode == "on":
             pass
