@@ -4,7 +4,6 @@ import os
 import time
 import cv2
 import numpy as np
-import pyIR
 import threading
 
 
@@ -28,12 +27,10 @@ class RemotePressError(Exception):
 class RemoteHandler(threading.Thread):
     def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._receiver = pyIR.Receiver(pin)
-        self._receiver.addRemote(pyIR.loadRemote(remotefile))
         self.result = None
         
     def run(self):
-        self.result = self._receiver.listen()
+        self.result = subprocess.run()
 
     def join(self):
         threading.Thread.join(self)
