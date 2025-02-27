@@ -5,6 +5,10 @@ import time
 import cv2
 import numpy as np
 import threading
+import shutil
+import rclpy
+
+import RemoteControlSubscriber
 
 
 class VideoCaptureObj:
@@ -28,12 +32,18 @@ class RemoteHandler(threading.Thread):
     def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.result = None
+        self.ketchup_blast = RemoteControlSubscriber(self.reunite)
         
     def run(self):
-        self.result = subprocess.run()
+        rclpy.init()
+        rclpy.spin(self.ketchup_blast)
 
     def join(self):
         threading.Thread.join(self)
+
+    def reunite(self, msg):
+        self.result = msg
+        
 
     def reset(self):
         self.result = None
@@ -42,9 +52,9 @@ class RemoteHandler(threading.Thread):
 def run_ros_package():
     """triggers SLAM and the motions"""
     try:
-        subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
+        subprocess.Popen([shutil.which('xterm'), '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
 
-        subprocess.Popen(["xterm", "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
+        subprocess.Popen([shutil.which("xterm"), "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
 
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
@@ -56,7 +66,7 @@ def run_ros_package2():
         print("Checking if ROS map server is ready...")
         time.sleep(5)
         save_path = os.path.expanduser("~/map")
-        subprocess.run(["xterm", "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
+        subprocess.run([shutil.which("xterm"), "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
 
@@ -126,9 +136,9 @@ def start_recognition(remotehand):
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 raise Exception
 
-            if not remotehand.is_alive():
+            if remotehand.result is not None:
                 pressed = remotehand.result
-                remotehand.join()
+                remotehand.reset()
                 raise RemotePressError(pressed)
 
 
@@ -144,10 +154,7 @@ def enter_operation_mode():
         return
         # what do we do when the button is pressed?? add later
 
-        
-        rem_handle = RemoteHandler()
-        rem_handle.start()
-        # then restart the remote
+
 
 if __name__ == "__main__":
     print("no!")
