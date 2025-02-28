@@ -1,5 +1,4 @@
 from ultralytics import YOLO
-import Desktop_app
 import subprocess
 import os
 import time
@@ -13,51 +12,49 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
+import shutil
 import math
 import tf2_ros
 import tf2_geometry_msgs
 from geometry_msgs.msg import PoseWithCovarianceStamped
+
+from remconsub import RemoteControlSubscriber
 map_filename = None
 
 
-class VideoCaptureObj:
-    """Context manager, used to guarantee that cap gets released"""
-    def __enter__(self):
-        self.cap = cv2.VideoCapture(0)
-        return self.cap
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.cap.release()
-        cv2.destroyAllWindows()
+class RemotePressError(Exception):
+    def __init__(self, remotecode, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.remcode = remotecode
 
 
-#class RemotePressError(Exception):
-  #  def __init__(self, remotecode, *args, **kwargs):
-  #      super().__init__(*args, **kwargs)
-   #     self.remcode = remotecode
-
-
-'''class RemoteHandler(threading.Thread):
+class RemoteHandler(threading.Thread):
     def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.result = None
+        self.ketchup_blast = RemoteControlSubscriber(self.reunite)
         
     def run(self):
-        self.result = subprocess.run()
+        rclpy.init()
+        rclpy.spin(self.ketchup_blast)
 
     def join(self):
         threading.Thread.join(self)
 
+    def reunite(self, msg):
+        self.result = msg
+        
+
     def reset(self):
-        self.result = None'''
+        self.result = None
 
 
 def run_ros_package():
     """triggers SLAM and the motions"""
     try:
-        subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
+        subprocess.Popen([shutil.which('xterm'), '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
 
-        subprocess.Popen(["xterm", "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
+        subprocess.Popen([shutil.which('xterm'), "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
 
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
@@ -69,7 +66,7 @@ def run_ros_package2():
         print("Checking if ROS map server is ready...")
         time.sleep(5)
         save_path = os.path.expanduser("~/map")
-        subprocess.run(["xterm", "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
+        subprocess.run([shutil.which('xterm'), "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
 
@@ -78,12 +75,12 @@ def start_navigation_server():
     """ Starts the TurtleBot3 Navigation Server with a specific map using subprocess. """
     try:
         subprocess.Popen(
-                ['xterm', '-e', 'ros2', 'launch', 'nav2_bringup', 'localization_launch.py',
+                [shutil.which('xterm'), '-e', 'ros2', 'launch', 'nav2_bringup', 'localization_launch.py',
                 'map:=edited2.yaml']
                 )
         time.sleep(5)
         subprocess.Popen(
-                ['xterm', '-e', 'ros2', 'launch', 'turtlebot3_navigation2', 'navigation2.launch.py',
+                [shutil.which('xterm'), '-e', 'ros2', 'launch', 'turtlebot3_navigation2', 'navigation2.launch.py',
                 'map:=edited2.yaml', 'use_sim_time:=False']
             )
         # Wait before setting initial pose
@@ -91,7 +88,7 @@ def start_navigation_server():
 
         # Set Initial Pose Automatically
         subprocess.Popen([
-            'xterm', '-e', 'python3', 'initial_pose.py'
+            shutil.which('xterm'), '-e', 'python3', 'initial_pose.py'
         ])
 
     except Exception as e:
@@ -114,8 +111,9 @@ def transform_to_map(self, x_base, y_base):
         return None, None'''
 
 class BallDetector(Node):
-    def __init__(self):
+    def __init__(self, remhandle):
         super().__init__('ball_detector')
+        self.remhandle = remhandle
         start_navigation_server()
         # Subscribe to TurtleBot's camera feed
         self.subscription = self.create_subscription(
@@ -136,6 +134,8 @@ class BallDetector(Node):
             self.pose_callback,
             10
         )
+
+        self.rotor_publisher = self.create_publisher(String, 'rotor/speed_control', 10)
 
         
 
@@ -208,6 +208,11 @@ class BallDetector(Node):
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 self.get_logger().info("Exiting camera stream...")
                 rclpy.shutdown()
+            if self.remhandle.result is not None:
+                pressed = remotehand.result
+                remotehand.reset()
+                raise RemotePressError(pressed)
+            
 
         except Exception as e:
             self.get_logger().error(f"Error processing image: {e}")
@@ -295,30 +300,21 @@ class BallDetector(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = BallDetector()
-
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        node.get_logger().info("Keyboard interrupt, shutting down")
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-'''def enter_operation_mode():
     rem_handle = RemoteHandler()
     rem_handle.start()
 
     try:
-        start_recognition(rem_handle)
-    except RemotePressError as exc:
-        if exc.remcode == "on":
-            pass
-        return
-        # what do we do when the button is pressed?? add later
-
-        
-        rem_handle = RemoteHandler()
-        rem_handle.startros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=False map:=edited_map.yaml (nav2)
-'''
-
+        while True:
+            try:
+                rclpy.spin(node)
+            except RemoteErrorPressed as rerror:
+                do_many_things = True
+                if rerror.remcode == "on":
+                    do_other_things = True
+                #TODO
+            
+    except KeyboardInterrupt:
+        node.get_logger().info("Keyboard interrupt, shutting down")
+    finally:
+        node.destroy_node()
+        rem_handle.join()
