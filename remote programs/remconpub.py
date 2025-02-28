@@ -10,7 +10,7 @@ class RemoteControlPublisher(Node):
 
         self.publisher = self.create_publisher(String, 'remote_control/button', 5)
 
-        self.rec = pyIR.receiver(pin)
+        self.rec = pyIR.Receiver(pin)
         self.rec.addRemote(pyIR.loadRemote(remotefile))
 
         self.start_listening()
