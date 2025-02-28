@@ -1,14 +1,23 @@
 from ultralytics import YOLO
+import Desktop_app
 import subprocess
 import os
 import time
 import cv2
 import numpy as np
 import threading
-import shutil
 import rclpy
-
-import RemoteControlSubscriber
+from rclpy.action import ActionClient
+from nav2_msgs.action import NavigateToPose
+from geometry_msgs.msg import PoseStamped
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import math
+import tf2_ros
+import tf2_geometry_msgs
+from geometry_msgs.msg import PoseWithCovarianceStamped
+map_filename = None
 
 
 class VideoCaptureObj:
@@ -22,39 +31,33 @@ class VideoCaptureObj:
         cv2.destroyAllWindows()
 
 
-class RemotePressError(Exception):
-    def __init__(self, remotecode, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.remcode = remotecode
+#class RemotePressError(Exception):
+  #  def __init__(self, remotecode, *args, **kwargs):
+  #      super().__init__(*args, **kwargs)
+   #     self.remcode = remotecode
 
 
-class RemoteHandler(threading.Thread):
+'''class RemoteHandler(threading.Thread):
     def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.result = None
-        self.ketchup_blast = RemoteControlSubscriber(self.reunite)
         
     def run(self):
-        rclpy.init()
-        rclpy.spin(self.ketchup_blast)
+        self.result = subprocess.run()
 
     def join(self):
         threading.Thread.join(self)
 
-    def reunite(self, msg):
-        self.result = msg
-        
-
     def reset(self):
-        self.result = None
+        self.result = None'''
 
 
 def run_ros_package():
     """triggers SLAM and the motions"""
     try:
-        subprocess.Popen([shutil.which('xterm'), '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
+        subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
 
-        subprocess.Popen([shutil.which("xterm"), "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
+        subprocess.Popen(["xterm", "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
 
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
@@ -66,83 +69,243 @@ def run_ros_package2():
         print("Checking if ROS map server is ready...")
         time.sleep(5)
         save_path = os.path.expanduser("~/map")
-        subprocess.run([shutil.which("xterm"), "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
+        subprocess.run(["xterm", "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
 
 
-
-def start_recognition(remotehand):
+def start_navigation_server():
+    """ Starts the TurtleBot3 Navigation Server with a specific map using subprocess. """
     try:
-        model = YOLO('yolov9e-seg.pt')  # Path to YOLO model
+        subprocess.Popen(
+                ['xterm', '-e', 'ros2', 'launch', 'nav2_bringup', 'localization_launch.py',
+                'map:=edited2.yaml']
+                )
+        time.sleep(5)
+        subprocess.Popen(
+                ['xterm', '-e', 'ros2', 'launch', 'turtlebot3_navigation2', 'navigation2.launch.py',
+                'map:=edited2.yaml', 'use_sim_time:=False']
+            )
+        # Wait before setting initial pose
+        time.sleep(5)
+
+        # Set Initial Pose Automatically
+        subprocess.Popen([
+            'xterm', '-e', 'python3', 'initial_pose.py'
+        ])
+
     except Exception as e:
-        print(f"Error loading YOLO: {e}")
-        print()
-        print()
-        raise
+        print(f"Error starting Navigation Server: {e}")
+'''
+def transform_to_map(self, x_base, y_base):
+    """ Transforms a point from base_link to map frame. """
+    try:
+        transform = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
+        point_stamped = tf2_geometry_msgs.PointStamped()
+        point_stamped.header.frame_id = 'base_link'
+        point_stamped.point.x = x_base
+        point_stamped.point.y = y_base
 
-    with VideoCaptureObj() as cap:
-        FOCAL_LENGTH = 800  # Focal length in pixels (requires camera calibration)
-        REAL_DIAMETER = 0.040  # Real world diameter in meters
-        previous_position = None
+        transformed_point = tf2_geometry_msgs.do_transform_point(point_stamped, transform)
+        return transformed_point.point.x, transformed_point.point.y
 
-        def calculate_distance(focal_length, real_diameter, pixel_height):
-            if pixel_height <= 0:
-                return None
-            return (focal_length * real_diameter) / pixel_height
+    except Exception as e:
+        self.get_logger().error(f"Error transforming coordinates: {e}")
+        return None, None'''
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+class BallDetector(Node):
+    def __init__(self):
+        super().__init__('ball_detector')
+        start_navigation_server()
+        # Subscribe to TurtleBot's camera feed
+        self.subscription = self.create_subscription(
+            Image,
+            'camera/image_raw',
+            self.image_callback,
+            10)
+        self.bridge = CvBridge()
+        self.model = YOLO('yolo11s.pt')  # Load YOLO model
+        """
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)"""
+
+        self.current_pose = None
+        self.pose_subscriber = self.create_subscription(
+            PoseWithCovarianceStamped,
+            '/amcl_pose',
+            self.pose_callback,
+            10
+        )
+
+        
+
+
+        # Parameters for distance estimation
+        self.FOCAL_LENGTH = 800  # Requires calibration
+        self.REAL_DIAMETER = 0.040  # Ball diameter in meters
+        self.CAMERA_HEIGHT = 0.13  
+        self.CAMERA_FORWARD = 0.15 
+
+        # ROS 2 Navigation Client
+        self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+        
+
+        self.get_logger().info("Ball detector node started")
+
+
+    def pose_callback(self, msg):
+        """ Update the robot's current pose from AMCL. """
+        self.current_pose = msg.pose.pose
+
+    def image_callback(self, msg):
+        try:
+            # Convert ROS Image message to OpenCV format
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+
+            # Process frame with YOLO
+            results = self.model(frame, device="cpu")
+            detections = results[0]
 
             CX, CY = frame.shape[1] // 2, frame.shape[0] // 2
-            results = model(frame)
-            detections = results[0]
-            TARGET_CLASS_ID = 32
-            filtered_boxes = []
+            detected_balls = []
 
             for box in detections.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                 confidence = box.conf[0].item()
                 class_id = int(box.cls[0].item())
+                class_name = detections.names[class_id]
 
-                if class_id == TARGET_CLASS_ID and confidence > 0.4:
-                    filtered_boxes.append((x1, y1, x2, y2, confidence))
+                if class_name in ["orange", "sports ball"] and confidence > 0.3:
+                    detected_balls.append((x1, y1, x2, y2, confidence))
 
-            for (x1, y1, x2, y2, confidence) in filtered_boxes:
+            for (x1, y1, x2, y2, confidence) in detected_balls:
                 x_center, y_center = (x1 + x2) // 2, (y1 + y2) // 2
-                pixel_height = y2 - y1
-                Z = calculate_distance(FOCAL_LENGTH, REAL_DIAMETER, pixel_height)
-                X_real = ((x_center - CX) * Z) / FOCAL_LENGTH
-                Y_real = ((y_center - CY) * Z) / FOCAL_LENGTH
+                box_width = x2 - x1
+                box_height = y2 - y1
 
-                if previous_position is not None:
-                    dx = X_real - previous_position[0]
-                    dy = Y_real - previous_position[1]
-                    dz = Z - previous_position[2]
+                aspect_ratio = box_width / box_height
+                is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
 
-                    theta_xy = np.arctan2(dy, dx)
-                    theta_xz = np.arctan2(dz, dx)
+                yaw_angle = math.degrees(math.atan2((x_center - CX), self.FOCAL_LENGTH))
 
-                    print(f"Movement direction: θ_xy={np.degrees(theta_xy):.2f}°, θ_xz={np.degrees(theta_xz):.2f}°")
+                if is_valid_ratio:
+                    pixel_size = max(box_width, box_height)
+                    Z = self.calculate_distance(self.FOCAL_LENGTH, self.REAL_DIAMETER, pixel_size)
 
-                previous_position = (X_real, Y_real, Z)
-                label = f"Ball: {confidence:.2f}, {Z:.2f}m"
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    X_robot, Y_robot, Z_robot, _ = self.calculate_robot_position(
+                        x_center, y_center, pixel_size, frame.shape[1], frame.shape[0]
+                    )
 
-            cv2.imshow("Ball Detection (Live)", frame)
+                    X, Y = self.calculate_xy(Z, yaw_angle)
+
+                    self.get_logger().info(f"Ball detected at: X={X:.3f}m, Y={Y:.3f}m, Z={Z:.3f}m, Angle={yaw_angle:.1f}°")
+
+                    # Send Navigation Goal
+                    self.send_navigation_goal(X, Y)
+                    break  
+
+            cv2.imshow("Ball Detection", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                raise Exception
+                self.get_logger().info("Exiting camera stream...")
+                rclpy.shutdown()
 
-            if remotehand.result is not None:
-                pressed = remotehand.result
-                remotehand.reset()
-                raise RemotePressError(pressed)
+        except Exception as e:
+            self.get_logger().error(f"Error processing image: {e}")
+
+    def calculate_distance(self, focal_length, real_diameter, pixel_size):
+        """Calculate distance from the camera to the detected object."""
+        if pixel_size <= 0:
+            return None
+        return (focal_length * real_diameter) / pixel_size
+
+    def calculate_robot_position(self, x_center, y_center, pixel_size, frame_width, frame_height):
+        """Calculate the robot's position relative to the detected ball."""
+        Z_cam = (self.FOCAL_LENGTH * self.REAL_DIAMETER) / pixel_size  
+
+        C_X, C_Y = frame_width // 2, frame_height // 2
+        X_cam = ((x_center - C_X) * Z_cam) / self.FOCAL_LENGTH  
+
+        X_robot = Z_cam - self.CAMERA_FORWARD
+        Y_robot = X_cam
+        Z_robot = self.CAMERA_HEIGHT  
+
+        yaw_angle = math.degrees(math.atan2(X_cam, Z_cam))
+
+        return X_robot, Y_robot, Z_robot, yaw_angle
+
+    def calculate_xy(self, z, theta_degrees):
+        """Convert Z distance and yaw angle to X, Y coordinates."""
+        theta_radians = np.radians(theta_degrees)
+        x = z * np.cos(theta_radians)
+        y = z * np.sin(theta_radians)
+        return x, y
+
+    def send_navigation_goal(self, x_real, y_real):
+        """ Sends goal coordinates to TurtleBot for navigation. """
+
+        """goal_msg = NavigateToPose.Goal()
+        goal_msg.pose.header.frame_id = "map"
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.pose.pose.position.x = x_real
+        goal_msg.pose.pose.position.y = y_real
+        goal_msg.pose.pose.orientation.w = 1.0  
+
+        self.get_logger().info(f"Sending TurtleBot to ({x_real:.2f}, {y_real:.2f})m")
+        self.nav_client.send_goal_async(goal_msg)"""
+
+        try:
+
+            if self.current_pose is None:
+                self.get_logger().warn("Waiting for AMCL pose...")
+                for _ in range(10):  # Try for 10 seconds
+                    rclpy.spin_once(self, timeout_sec=1.0)
+                    if self.current_pose is not None:
+                        break
+                if self.current_pose is None:
+                    self.get_logger().error("AMCL pose not received after timeout, cannot calculate goal.")
+                    return
+            x_current = self.current_pose.position.x
+            y_current = self.current_pose.position.y
+            qx = self.current_pose.orientation.x
+            qy = self.current_pose.orientation.y
+            qz = self.current_pose.orientation.z
+            qw = self.current_pose.orientation.w
+
+            # Convert quaternion to yaw angle
+            yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+
+            # Transform relative coordinates into the map frame
+            x_map = x_current + (x_real * math.cos(yaw) - y_real * math.sin(yaw))
+            y_map = y_current + (x_real * math.sin(yaw) + y_real * math.cos(yaw))
+
+            # Create and send goal
+            goal_msg = NavigateToPose.Goal()
+            goal_msg.pose.header.frame_id = "map"
+            goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+            goal_msg.pose.pose.position.x = x_map
+            goal_msg.pose.pose.position.y = y_map
+            goal_msg.pose.pose.orientation.w = 1.0  
+
+            self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
+            self.nav_client.send_goal_async(goal_msg)
+
+        except Exception as e:
+            self.get_logger().error(f"Error transforming coordinates: {e}")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = BallDetector()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Keyboard interrupt, shutting down")
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
-def enter_operation_mode():
+'''def enter_operation_mode():
     rem_handle = RemoteHandler()
     rem_handle.start()
 
@@ -154,8 +317,8 @@ def enter_operation_mode():
         return
         # what do we do when the button is pressed?? add later
 
+        
+        rem_handle = RemoteHandler()
+        rem_handle.startros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=False map:=edited_map.yaml (nav2)
+'''
 
-
-if __name__ == "__main__":
-    print("no!")
-    raise Exception
