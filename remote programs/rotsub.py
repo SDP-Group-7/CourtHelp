@@ -14,7 +14,7 @@ class RotorSubscriber(Node):
         self.motor = MotorDriver()
         self.encoder = GroveOpticalRotaryEncoder(pin)
         
-        self.subscriber = self.create_subscriber(String, 'rotor/speed_control', self.set_speed, 10)
+        self.subscriber = self.create_subscription(String, 'rotor/speed_control', self.set_speed, 10)
         self.subscriber
 
     def set_speed(self, msg):

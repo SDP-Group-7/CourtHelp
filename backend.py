@@ -17,8 +17,9 @@ import math
 import tf2_ros
 import tf2_geometry_msgs
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from std_msgs.msg import String
 
-from remconsub import RemoteControlSubscriber
+import remconsub
 map_filename = None
 
 
@@ -32,10 +33,9 @@ class RemoteHandler(threading.Thread):
     def __init__(self, remotefile="BENQ_REMOTE", pin=29, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.result = None
-        self.ketchup_blast = RemoteControlSubscriber(self.reunite)
+        self.ketchup_blast = remconsub.RemoteControlSubscriber(self.reunite)
         
     def run(self):
-        rclpy.init()
         rclpy.spin(self.ketchup_blast)
 
     def join(self):
@@ -302,9 +302,9 @@ class BallDetector(Node):
             self.get_logger().error(f"Error transforming coordinates: {e}")
 
 def main(args=None):
-    node = BallDetector()
     rem_handle = RemoteHandler()
     rem_handle.start()
+    node = BallDetector(rem_handle)
 
     try:
         while True:

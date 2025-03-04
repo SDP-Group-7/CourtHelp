@@ -8,7 +8,7 @@ class RemoteControlSubscriber(Node):
         super().__init__('remote_control_publisher')
 
 
-        self.subscriber = self.create_subscriber(String, 'remote_control/button', linkf, 5)
+        self.subscriber = self.create_subscription(String, 'remote_control/button', linkf, 5)
         self.subscriber
 
     def destroy_node(self):
@@ -17,7 +17,6 @@ class RemoteControlSubscriber(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
     node = RemoteControlSubscriber()
     
     try:
@@ -30,4 +29,5 @@ def main(args=None):
 
 
 if __name__ == "__main__":
+    rclpy.init(args=args)
     main()
