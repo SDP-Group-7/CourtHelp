@@ -55,9 +55,11 @@ class VideoCaptureObj:
 def run_ros_package():
     """triggers SLAM and the motions"""
     try:
-        subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
+        #subprocess.Popen(['xterm', '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
 
-        subprocess.Popen(["xterm", "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"])
+        subprocess.Popen(["xterm", "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"],
+                         stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, start_new_session=True)
 
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
@@ -69,7 +71,9 @@ def run_ros_package2():
         print("Checking if ROS map server is ready...")
         time.sleep(5)
         save_path = os.path.expanduser("~/map")
-        subprocess.run(["xterm", "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], check=True)
+        subprocess.run(["xterm", "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path], 
+                       stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, check=True)
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
 
@@ -293,7 +297,6 @@ class BallDetector(Node):
             self.get_logger().error(f"Error transforming coordinates: {e}")
 
 def main(args=None):
-    rclpy.init(args=args)
     node = BallDetector()
 
     try:
