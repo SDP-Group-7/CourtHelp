@@ -62,12 +62,12 @@ def run_ros_package():
         print("Error running ROS package:", e)
 
 
-def run_ros_package2():
+def run_ros_package2(save_path):
     """saves map in current directory and closes stuff"""
     try:
         print("Checking if ROS map server is ready...")
         time.sleep(5)
-        save_path = os.path.expanduser("~/map")
+        #save_path = os.path.expanduser("~/map")
         subprocess.run([shutil.which('xterm'), "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path],
                          stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL, check=True)
@@ -75,17 +75,17 @@ def run_ros_package2():
         print("Error running ROS package:", e)
 
 
-def start_navigation_server():
+def start_navigation_server(map_path):
     """ Starts the TurtleBot3 Navigation Server with a specific map using subprocess. """
     try:
         subprocess.Popen(
                 [shutil.which('xterm'), '-e', 'ros2', 'launch', 'nav2_bringup', 'localization_launch.py',
-                'map:=edited2.yaml']
+                'map:={map_path}']
                 )
         time.sleep(5)
         subprocess.Popen(
                 [shutil.which('xterm'), '-e', 'ros2', 'launch', 'turtlebot3_navigation2', 'navigation2.launch.py',
-                'map:=edited2.yaml', 'use_sim_time:=False']
+                'map:={map_path}', 'use_sim_time:=False']
             )
         # Wait before setting initial pose
         time.sleep(5)
@@ -118,7 +118,7 @@ class BallDetector(Node):
     def __init__(self, remhandle):
         super().__init__('ball_detector')
         self.remhandle = remhandle
-        start_navigation_server()
+        start_navigation_server(map_path)
         # Subscribe to TurtleBot's camera feed
         self.subscription = self.create_subscription(
             Image,
@@ -301,10 +301,10 @@ class BallDetector(Node):
         except Exception as e:
             self.get_logger().error(f"Error transforming coordinates: {e}")
 
-def main(args=None):
+def main(map_path, args=None):
     rem_handle = RemoteHandler()
     rem_handle.start()
-    node = BallDetector(rem_handle)
+    node = BallDetector(rem_handle, map_path)
 
     try:
         while True:

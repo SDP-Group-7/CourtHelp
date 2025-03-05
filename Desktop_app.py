@@ -10,6 +10,7 @@ from std_msgs.msg import String
 import glob
 from PIL import ImageOps
 import math
+from tkinter import filedialog
 
 PANEL_BG="#14213d"
 class NoGoZoneApp:
@@ -114,7 +115,7 @@ class NoGoZoneApp:
         self.save_button = self.custom_button(self.control_frame, text="Save Map with Zones", command=self.save_map_with_zones, tooltip="Save your map with added zones.")
 
         self.custom_step_label(self.control_frame,"Step 5: Start the Robot")
-        self.done_button = self.custom_button(self.control_frame, text="Done", command=backend.main, tooltip="Start the robot's function")
+        self.done_button = self.custom_button(self.control_frame, text="Done", command=self.start_robot, tooltip="Start the robot's function")
         
         # Create bottom border
         self.bottom_frame = tk.Frame(self.root)
@@ -170,6 +171,16 @@ class NoGoZoneApp:
         self.right_button.config(state=state)
         self.down_button.config(state=state)
 
+    def start_robot(self):
+        map_path = filedialog.askopenfilename(
+            title="Select Map YAML File",
+            filetypes=[("YAML Files", "*.yaml")]
+        )
+        if map_path:
+            backend.main(map_path)
+        else:
+            self.show_warning("No map selected. Please select a map to start the robot.")
+
     def handle_drag_or_draw(self, event):
         if self.edit_mode:
             self.on_drag(event)
@@ -214,7 +225,20 @@ class NoGoZoneApp:
         backend.run_ros_package()
 
     def finish_configuration(self):
-        backend.run_ros_package2()
+        # Ask user for save location and filename
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".yaml",
+            filetypes=[("YAML Files", "*.yaml")],
+            title="Save Map As"
+        )
+
+        if not file_path:
+            print("Save canceled.")
+            return  # User canceled the save dialog
+
+        # Remove .yaml extension if present (map saver adds its own extensions)
+        save_path = file_path.replace(".yaml", "")
+        backend.run_ros_package2(save_path)
         self.set_control_buttons_state("disabled")
 
     def is_inside_no_go_polygon(self, x, y):
