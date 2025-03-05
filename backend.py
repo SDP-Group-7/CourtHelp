@@ -24,9 +24,7 @@ map_filename = None
 
 
 class RemotePressError(Exception):
-    def __init__(self, remotecode, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.remcode = remotecode
+    pass
 
 
 class RemoteHandler(threading.Thread):
@@ -141,6 +139,8 @@ class BallDetector(Node):
 
         self.rotor_publisher = self.create_publisher(String, 'rotor/speed_control', 10)
 
+        self.cam_status_publisher = self.create_publisher(String, 'camera/change_status', 10)
+
         
 
 
@@ -156,6 +156,25 @@ class BallDetector(Node):
 
         self.get_logger().info("Ball detector node started")
 
+    def cam_on(self):
+        self.cam_status_publisher.publish("on")
+
+    def cam_off(self):
+        self.cam_status_publisher.publish("off")
+    
+    def motor_on(self):
+        self.rotor_publisher.publish("22")
+    
+    def motor_off(self):
+        self.rotor_publisher.publish("0")
+    
+    def warmup_out(self):
+        self.cam_on()
+        self.motor_on()
+    
+    def cooldown_out(self):
+        self.cam_off()
+        self.motor_off()
 
     def pose_callback(self, msg):
         """ Update the robot's current pose from AMCL. """
@@ -213,9 +232,7 @@ class BallDetector(Node):
                 self.get_logger().info("Exiting camera stream...")
                 rclpy.shutdown()
             if self.remhandle.result is not None:
-                pressed = remotehand.result
-                remotehand.reset()
-                raise RemotePressError(pressed)
+                raise RemotePressError()
             
 
         except Exception as e:
@@ -305,16 +322,32 @@ def main(map_path, args=None):
     rem_handle = RemoteHandler()
     rem_handle.start()
     node = BallDetector(rem_handle, map_path)
+    mode = "off"
+
 
     try:
         while True:
-            try:
-                rclpy.spin(node)
-            except RemoteErrorPressed as rerror:
-                do_many_things = True
-                if rerror.remcode == "on":
-                    do_other_things = True
-                #TODO
+            if mode == "off":
+                node.cooldown_out()
+                while rem_handle.result is None:
+                    pass
+                mode = rem_handle.result
+                rem_handle.reset()
+            elif mode == "on":
+                node.warmup_out()
+                while rem_handle.result is None:
+                    pass
+                mode = rem_handle.result
+                rem_handle.reset()
+            elif mode == "collect":
+                node.warmup_out()
+                try:
+                    rclpy.spin(node)
+                except RemotePressError:
+                    mode = rem_handle.result
+                    rem_handle.reset()
+            else:
+                raise NotImplementedError("Unimplemented mode called")
             
     except KeyboardInterrupt:
         node.get_logger().info("Keyboard interrupt, shutting down")
