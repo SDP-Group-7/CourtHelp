@@ -18,7 +18,7 @@ import tf2_ros
 import tf2_geometry_msgs
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from std_msgs.msg import String
-
+from geometry_msgs.msg import Twist
 import remconsub
 map_filename = None
 
@@ -74,16 +74,17 @@ def run_ros_package2(save_path):
 
 
 def start_navigation_server(map_path):
+    print(map_path)
     """ Starts the TurtleBot3 Navigation Server with a specific map using subprocess. """
     try:
         subprocess.Popen(
                 [shutil.which('xterm'), '-e', 'ros2', 'launch', 'nav2_bringup', 'localization_launch.py',
-                'map:={map_path}']
+                'map:=map1.yaml']
                 )
         time.sleep(5)
         subprocess.Popen(
                 [shutil.which('xterm'), '-e', 'ros2', 'launch', 'turtlebot3_navigation2', 'navigation2.launch.py',
-                'map:={map_path}', 'use_sim_time:=False']
+                'map:=map1.yaml', 'use_sim_time:=False']
             )
         # Wait before setting initial pose
         time.sleep(5)
@@ -113,9 +114,9 @@ def transform_to_map(self, x_base, y_base):
         return None, None'''
 
 class BallDetector(Node):
-    def __init__(self, remhandle):
+    def __init__(self, map_path):   #self, remhandle, map_path
         super().__init__('ball_detector')
-        self.remhandle = remhandle
+        #self.remhandle = remhandle
         start_navigation_server(map_path)
         # Subscribe to TurtleBot's camera feed
         self.subscription = self.create_subscription(
@@ -136,10 +137,10 @@ class BallDetector(Node):
             self.pose_callback,
             10
         )
+        
+        #self.rotor_publisher = self.create_publisher(String, 'rotor/speed_control', 10)
 
-        self.rotor_publisher = self.create_publisher(String, 'rotor/speed_control', 10)
-
-        self.cam_status_publisher = self.create_publisher(String, 'camera/change_status', 10)
+        #self.cam_status_publisher = self.create_publisher(String, 'camera/change_status', 10)
 
         
 
@@ -152,10 +153,10 @@ class BallDetector(Node):
 
         # ROS 2 Navigation Client
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+        self.vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         
-
         self.get_logger().info("Ball detector node started")
-
+    '''
     def cam_on(self):
         self.cam_status_publisher.publish("on")
 
@@ -174,7 +175,7 @@ class BallDetector(Node):
     
     def cooldown_out(self):
         self.cam_off()
-        self.motor_off()
+        self.motor_off()'''
 
     def pose_callback(self, msg):
         """ Update the robot's current pose from AMCL. """
@@ -183,6 +184,7 @@ class BallDetector(Node):
     def image_callback(self, msg):
         try:
             # Convert ROS Image message to OpenCV format
+            print('Hi')
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
             # Process frame with YOLO
@@ -200,32 +202,35 @@ class BallDetector(Node):
 
                 if class_name in ["orange", "sports ball"] and confidence > 0.3:
                     detected_balls.append((x1, y1, x2, y2, confidence))
+            if detected_balls:
+                for (x1, y1, x2, y2, confidence) in detected_balls:
+                    x_center, y_center = (x1 + x2) // 2, (y1 + y2) // 2
+                    box_width = x2 - x1
+                    box_height = y2 - y1
 
-            for (x1, y1, x2, y2, confidence) in detected_balls:
-                x_center, y_center = (x1 + x2) // 2, (y1 + y2) // 2
-                box_width = x2 - x1
-                box_height = y2 - y1
+                    aspect_ratio = box_width / box_height
+                    is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
 
-                aspect_ratio = box_width / box_height
-                is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
+                    yaw_angle = math.degrees(math.atan2((x_center - CX), self.FOCAL_LENGTH))
 
-                yaw_angle = math.degrees(math.atan2((x_center - CX), self.FOCAL_LENGTH))
+                    if is_valid_ratio:
+                        pixel_size = max(box_width, box_height)
+                        Z = self.calculate_distance(self.FOCAL_LENGTH, self.REAL_DIAMETER, pixel_size)
 
-                if is_valid_ratio:
-                    pixel_size = max(box_width, box_height)
-                    Z = self.calculate_distance(self.FOCAL_LENGTH, self.REAL_DIAMETER, pixel_size)
+                        X_robot, Y_robot, Z_robot, _ = self.calculate_robot_position(
+                            x_center, y_center, pixel_size, frame.shape[1], frame.shape[0]
+                        )
 
-                    X_robot, Y_robot, Z_robot, _ = self.calculate_robot_position(
-                        x_center, y_center, pixel_size, frame.shape[1], frame.shape[0]
-                    )
+                        X, Y = self.calculate_xy(Z, yaw_angle)
 
-                    X, Y = self.calculate_xy(Z, yaw_angle)
+                        self.get_logger().info(f"Ball detected at: X={X:.3f}m, Y={Y:.3f}m, Z={Z:.3f}m, Angle={yaw_angle:.1f}°")
 
-                    self.get_logger().info(f"Ball detected at: X={X:.3f}m, Y={Y:.3f}m, Z={Z:.3f}m, Angle={yaw_angle:.1f}°")
-
-                    # Send Navigation Goal
-                    self.send_navigation_goal(X, Y)
-                    break  
+                        # Send Navigation Goal
+                        self.send_navigation_goal(X, Y)
+                        break  
+            else:
+                # No ball detected → Rotate 10 degrees
+                self.create_timer(5.0, lambda: self.rotate_robot(10)) 
 
             cv2.imshow("Ball Detection", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -237,6 +242,22 @@ class BallDetector(Node):
 
         except Exception as e:
             self.get_logger().error(f"Error processing image: {e}")
+
+    def rotate_robot(self, degrees):
+        """ Rotate the TurtleBot by a given angle (in degrees). """
+        twist_msg = Twist()
+        angular_speed = 0.1  # Adjust rotation speed
+        duration = abs(degrees) / 10  # 10 degrees per second
+
+        twist_msg.angular.z = angular_speed if degrees > 0 else -angular_speed
+        self.vel_publisher.publish(twist_msg)
+
+        self.get_logger().info(f"Rotating {degrees} degrees...")
+        time.sleep(duration)
+
+        # Stop rotation
+        twist_msg.angular.z = 0.0
+        self.vel_publisher.publish(twist_msg)
 
     def calculate_distance(self, focal_length, real_diameter, pixel_size):
         """Calculate distance from the camera to the detected object."""
@@ -283,10 +304,11 @@ class BallDetector(Node):
 
             if self.current_pose is None:
                 self.get_logger().warn("Waiting for AMCL pose...")
-                for _ in range(10):  # Try for 10 seconds
+                for _ in range(30):  # Try for 10 seconds
                     rclpy.spin_once(self, timeout_sec=1.0)
-                    if self.current_pose is not None:
-                        break
+                    #if self.current_pose is not None:
+                        #break
+                
                 if self.current_pose is None:
                     self.get_logger().error("AMCL pose not received after timeout, cannot calculate goal.")
                     return
@@ -313,19 +335,21 @@ class BallDetector(Node):
             goal_msg.pose.pose.orientation.w = 1.0  
 
             self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
+            self.get_logger().info(f"Robot pose ({x_current:.2f}, {y_current:.2f})")
             self.nav_client.send_goal_async(goal_msg)
 
         except Exception as e:
             self.get_logger().error(f"Error transforming coordinates: {e}")
 
 def main(map_path, args=None):
-    rem_handle = RemoteHandler()
-    rem_handle.start()
-    node = BallDetector(rem_handle, map_path)
+    #rem_handle = RemoteHandler()
+    #rem_handle.start()
+    #node = BallDetector(rem_handle, map_path)
+    node = BallDetector(map_path)    
     mode = "off"
-
-
-    try:
+    #node.warmup_out()
+    rclpy.spin(node)
+    """try:
         while True:
             if mode == "off":
                 node.cooldown_out()
@@ -354,3 +378,4 @@ def main(map_path, args=None):
     finally:
         node.destroy_node()
         rem_handle.join()
+    """
