@@ -98,39 +98,20 @@ def start_navigation_server(map_path):
 
     except Exception as e:
         print(f"Error starting Navigation Server: {e}")
-'''
-def transform_to_map(self, x_base, y_base):
-    """ Transforms a point from base_link to map frame. """
-    try:
-        transform = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
-        point_stamped = tf2_geometry_msgs.PointStamped()
-        point_stamped.header.frame_id = 'base_link'
-        point_stamped.point.x = x_base
-        point_stamped.point.y = y_base
-
-        transformed_point = tf2_geometry_msgs.do_transform_point(point_stamped, transform)
-        return transformed_point.point.x, transformed_point.point.y
-
-    except Exception as e:
-        self.get_logger().error(f"Error transforming coordinates: {e}")
-        return None, None'''
 
 class BallDetector(Node):
     def __init__(self, map_path):   #self, remhandle, map_path
         super().__init__('ball_detector')
         #self.remhandle = remhandle
-        start_navigation_server(map_path)
+        #start_navigation_server(map_path)
         # Subscribe to TurtleBot's camera feed
-        qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,  # Best effort to minimize delay
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1  # Keep only the latest frame
-        )
+        self.current_goal_handle = None
+        
         self.subscription = self.create_subscription(
             Image,
             'camera/image_raw',
             self.image_callback,
-            qos_profile)
+            10)
         self.bridge = CvBridge()
         self.model = YOLO('yolo11s.pt')  # Load YOLO model
         """
@@ -157,6 +138,7 @@ class BallDetector(Node):
         self.REAL_DIAMETER = 0.040  # Ball diameter in meters
         self.CAMERA_HEIGHT = 0.13  
         self.CAMERA_FORWARD = 0.15 
+        self.rotating = False 
 
         # ROS 2 Navigation Client
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
@@ -236,15 +218,16 @@ class BallDetector(Node):
                         self.send_navigation_goal(X, Y)
                         break  
             else:
-                # No ball detected → Rotate 10 degrees
-                self.create_timer(5.0, lambda: self.rotate_robot(10)) 
+                if not self.rotating:  # **Ensure only one rotation at a time**
+                    self.rotating = True  
+                    self.create_timer(5.0, self.rotate_and_reset)  
 
             cv2.imshow("Ball Detection", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 self.get_logger().info("Exiting camera stream...")
                 rclpy.shutdown()
-            if self.remhandle.result is not None:
-                raise RemotePressError()
+            #if self.remhandle.result is not None:
+                #raise RemotePressError()
             
 
         except Exception as e:
@@ -253,8 +236,8 @@ class BallDetector(Node):
     def rotate_robot(self, degrees):
         """ Rotate the TurtleBot by a given angle (in degrees). """
         twist_msg = Twist()
-        angular_speed = 0.1  # Adjust rotation speed
-        duration = abs(degrees) / 10  # 10 degrees per second
+        angular_speed = 0.07  # Adjust rotation speed
+        duration = abs(degrees) / 20  # 10 degrees per second
 
         twist_msg.angular.z = angular_speed if degrees > 0 else -angular_speed
         self.vel_publisher.publish(twist_msg)
@@ -265,6 +248,15 @@ class BallDetector(Node):
         # Stop rotation
         twist_msg.angular.z = 0.0
         self.vel_publisher.publish(twist_msg)
+
+    def rotate_and_reset(self):
+        """ Rotate the robot and then reset the flag after 5 seconds. """
+        self.rotate_robot(10)
+        self.create_timer(5.0, self.reset_rotation_flag)
+
+    def reset_rotation_flag(self):
+        """ Reset the rotation flag so the robot can turn again. """
+        self.rotating = False
 
     def calculate_distance(self, focal_length, real_diameter, pixel_size):
         """Calculate distance from the camera to the detected object."""
@@ -311,7 +303,7 @@ class BallDetector(Node):
 
             if self.current_pose is None:
                 self.get_logger().warn("Waiting for AMCL pose...")
-                for _ in range(30):  # Try for 10 seconds
+                for _ in range(60):  # Try for 10 seconds
                     rclpy.spin_once(self, timeout_sec=1.0)
                     #if self.current_pose is not None:
                         #break
@@ -344,14 +336,40 @@ class BallDetector(Node):
             self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
             self.get_logger().info(f"Robot pose ({x_current:.2f}, {y_current:.2f})")
             self.nav_client.send_goal_async(goal_msg)
+            send_goal_future = self.nav_client.send_goal_async(goal_msg)
+            send_goal_future.add_done_callback(self.goal_response_callback)
 
         except Exception as e:
             self.get_logger().error(f"Error transforming coordinates: {e}")
+
+
+    def goal_response_callback(self, future):
+        """ Handle goal response and result """
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error("Goal was rejected!")
+            return
+        
+        self.get_logger().info("Goal accepted!")
+        self.current_goal_handle = goal_handle
+        
+        # Wait for completion
+        get_result_future = goal_handle.get_result_async()
+        get_result_future.add_done_callback(self.goal_completed_callback)
+
+    def goal_completed_callback(self, future):
+        """ Handle completed navigation goal """
+        result = future.result()
+        self.get_logger().info("Goal Completed! Ready for next goal.")
+        
+        # Clear current goal handle so a new goal can be sent
+        self.current_goal_handle = None
 
 def main(map_path, args=None):
     #rem_handle = RemoteHandler()
     #rem_handle.start()
     #node = BallDetector(rem_handle, map_path)
+    start_navigation_server(map_path)
     node = BallDetector(map_path)    
     mode = "off"
     #node.warmup_out()
