@@ -21,6 +21,8 @@ from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 import remconsub
 map_filename = None
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
 
 
 class RemotePressError(Exception):
@@ -119,11 +121,16 @@ class BallDetector(Node):
         #self.remhandle = remhandle
         start_navigation_server(map_path)
         # Subscribe to TurtleBot's camera feed
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,  # Best effort to minimize delay
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1  # Keep only the latest frame
+        )
         self.subscription = self.create_subscription(
             Image,
             'camera/image_raw',
             self.image_callback,
-            10)
+            qos_profile)
         self.bridge = CvBridge()
         self.model = YOLO('yolo11s.pt')  # Load YOLO model
         """
