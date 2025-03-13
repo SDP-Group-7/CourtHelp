@@ -31,6 +31,13 @@ class NoGoZoneApp:
         self.no_go_polygons = []
         self.current_shape = []
         self.selected_shape = None
+        self.current_preview = None  # Used to store shape preview during drawing
+        self.no_go_shapes = []  # Stores finalized no-go zones
+        self.active_button = None 
+        self.occupied_regions = []  # Stores occupied areas of No-Go Zones
+        self.style = ttk.Style()
+        self.style.configure("TButton", background="#D9D9D9", foreground="black", font=('TkDefaultFont', 12))  # Default style
+        self.style.map("Active.TButton", background=[("active", "#FFD700"), ("!active", "#FFD700")])  # Gold for active
 
         # for the teleop in desktop
         rclpy.init()
@@ -42,6 +49,20 @@ class NoGoZoneApp:
             self.update_status_label,
             10
         )
+
+        # Create shape selection panel inside the main app
+        self.shape_panel = tk.Frame(self.root, bg="#DDD", bd=2, relief=tk.RIDGE)
+        self.shape_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
+        tk.Label(self.shape_panel, text="Select Shape", font=("Arial", 12, "bold"), bg="#DDD").pack(pady=5)
+
+        self.shape_buttons = {}  # Dictionary to store buttons
+
+        shapes = ["Oval", "Circle", "Square", "Triangle", "Pentagon"]
+        for shape in shapes:
+            btn = tk.Button(self.shape_panel, text=shape, state=tk.DISABLED, 
+                            command=lambda s=shape: self.select_shape(s))
+            btn.pack(fill=tk.X, padx=5, pady=2)
+            self.shape_buttons[shape] = btn
 
         # Create a frame for control buttons on the left side
         self.control_frame = tk.Frame(self.root, bg=PANEL_BG)
@@ -145,23 +166,46 @@ class NoGoZoneApp:
         self.canvas.config(cursor=self.cursor_mode)
         
         self.canvas.bind("<ButtonPress-1>", self.on_press)
-        self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        self.canvas.bind("<ButtonRelease-1>", self.finalize_shape)
         self.canvas.bind("<ButtonPress-3>", self.on_right_click)
-        self.canvas.bind("<Motion>", self.on_motion)
-        self.canvas.bind("<B1-Motion>", self.handle_drag_or_draw)
+        #self.canvas.bind("<Motion>", self.on_motion)
+        #self.canvas.bind("<B1-Motion>", self.update_shape_preview)
+        self.canvas.bind("<Motion>", self.on_motion)       # Detect hover over shapes
+        self.canvas.bind("<B1-Motion>", self.on_drag)      # Drag to move/resize shapes
 
         self.root.after(100, self.ros_spin)
 
     def custom_button(self, control_frame, text, command, tooltip):
         button = ttk.Button(master=control_frame,
                         text=text,
-                        command=command,
-                        style='standard.TButton'
+                        command=lambda: self.set_active_button(button, command),  # Wraps command,
+                        style="TButton"  # Default style
                         )
         button.pack(fill=tk.BOTH, ipady=5, pady=3, padx=10)
         button.bind("<Enter>", lambda e: self.show_tooltip(e, tooltip))
         button.bind("<Leave>", lambda e: self.hide_tooltip())
         return button
+    
+    def set_active_button(self, button, command):
+        """ Updates button color when clicked and resets others """
+        if hasattr(self, "active_button") and self.active_button:
+            self.active_button.configure(style="TButton")  # Reset old button
+
+        button.configure(style="Active.TButton")  # Change new button to gold
+        self.active_button = button  # Store active button
+        command()
+
+    def set_active_control_button(self, button, command):
+        """ Updates control button styles when clicked and sends the command. """
+        # Reset all buttons to default (gray)
+        for btn in [self.up_button, self.left_button, self.stop_button, self.right_button, self.down_button]:
+            btn.config(bg="lightgray", fg="black")
+
+        # Set the clicked button to gold
+        button.config(bg="#FFD700", fg="black")
+
+        # Send the command to the robot
+        self.send_command(command)
     
     #set control button state
     def set_control_buttons_state(self, state):
@@ -170,6 +214,68 @@ class NoGoZoneApp:
         self.stop_button.config(state=state)
         self.right_button.config(state=state)
         self.down_button.config(state=state)
+
+    def select_shape(self, shape):
+        """ Sets the selected shape for no-go zones and enables drawing mode. """
+        if self.mode != "no_go":
+            return  # Prevents selection when in home/edit mode
+
+        self.selected_shape = shape
+        self.edit_mode = False
+        self.canvas.config(cursor="cross")
+        for btn in self.shape_buttons.values():
+            btn.config(bg="lightgray", fg="black")
+
+        # Highlight selected shape
+        self.shape_buttons[shape].config(bg="#FFD700", fg="black")
+
+    def finalize_shape(self, event):
+        if self.current_preview:
+            self.canvas.delete(self.current_preview)
+        
+        final_shape = self.create_shape(self.start_x, self.start_y, event.x, event.y, preview=False)
+        
+        if final_shape:  # Only add if the shape is valid
+            self.no_go_shapes.append(final_shape)
+        
+        self.current_preview = None
+
+    def start_drawing_shape(self, event):
+        self.start_x, self.start_y = event.x, event.y
+        if self.current_preview:
+            self.canvas.delete(self.current_preview)
+        
+        self.current_preview = self.create_shape(self.start_x, self.start_y, event.x, event.y, preview=True)
+
+    def update_shape_preview(self, event):
+        if self.current_preview:
+            self.canvas.delete(self.current_preview)
+        self.current_preview = self.create_shape(self.start_x, self.start_y, event.x, event.y, preview=True)
+
+    def create_shape(self, x1, y1, x2, y2, preview=False):
+        shape_id = None
+        outline_color = "black"
+        fill_color = "" if preview else "black"  # No fill for preview
+        if self.selected_shape == "Oval":
+            shape_id = self.canvas.create_oval(x1, y1, x2, y2, outline=outline_color, fill=fill_color, tags="preview")
+        elif self.selected_shape == "Circle":
+            size = min(abs(x2 - x1), abs(y2 - y1))
+            shape_id = self.canvas.create_oval(x1, y1, x1 + size, y1 + size, outline=outline_color, fill=fill_color, tags="preview")
+        elif self.selected_shape == "Square":
+            size = min(abs(x2 - x1), abs(y2 - y1))
+            shape_id = self.canvas.create_rectangle(x1, y1, x1 + size, y1 + size, outline=outline_color, fill=fill_color, tags="preview")
+        elif self.selected_shape == "Triangle":
+            shape_id = self.canvas.create_polygon(x1, y2, (x1+x2)//2, y1, x2, y2, outline=outline_color, fill=fill_color, tags="preview")
+        elif self.selected_shape == "Pentagon":
+            shape_id = self.create_pentagon(x1, y1, x2, y2, preview)
+        return shape_id
+    
+    def create_pentagon(self, x1, y1, x2, y2, preview):
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        radius = min(abs(x2 - x1), abs(y2 - y1)) // 2
+        angle = 2 * math.pi / 5
+        points = [(cx + radius * math.cos(i * angle), cy + radius * math.sin(i * angle)) for i in range(5)]
+        return self.canvas.create_polygon(points, outline="black", fill="black" if not preview else "", tags="preview")
 
     def start_robot(self):
         map_path = filedialog.askopenfilename(
@@ -272,7 +378,32 @@ class NoGoZoneApp:
         if self.map_image is None:
             self.show_warning("Please load a map before performing this action.")
             return False
+        self.enable_editing_buttons()
         return True
+    
+    def enable_editing_buttons(self):
+        buttons_to_enable = [
+            self.no_go_button,
+            self.home_zone_button,
+            self.delete_all_button,
+            self.edit_zone_button
+        ]
+
+        for button in buttons_to_enable:
+            button.config(state=tk.NORMAL)
+
+        # Also enable shape selection buttons
+        self.enable_shapes()
+
+        # Force UI to update
+        self.root.update_idletasks()
+
+    def enable_shapes(self):
+        """Enable shape selection buttons only if 'Draw No-Go Zone' is active."""
+        if self.mode == "no_go":  # Only enable shapes if No-Go mode is active
+            for child in self.shape_panel.winfo_children():
+                if isinstance(child, tk.Button):
+                    child.config(state=tk.NORMAL)
 
     def show_tooltip(self, event, text):
         widget = event.widget
@@ -286,15 +417,18 @@ class NoGoZoneApp:
         self.tooltip.place_forget()
         
     def set_no_go_mode(self):
+        """ Opens a persistent shape selection panel and enables shape drawing mode. """
         if not self.check_map_loaded():
             return
         self.mode = "no_go"
         self.edit_mode = False
-        self.cursor_mode = "cross"
-        self.canvas.config(cursor=self.cursor_mode)
-        self.current_polygon_points = []
-        self.current_polygon_lines = []
+        self.selected_shape = None
+        self.canvas.config(cursor="cross")
 
+        #for btn in self.shape_buttons.values():
+            #btn.config(state=tk.NORMAL, bg="lightgray", fg="black")
+        self.enable_shapes()
+        
     def finish_no_go_zone(self):
         if len(self.current_polygon_points) < 3:
             self.show_warning("A no-go zone needs at least 3 points.")
@@ -362,32 +496,51 @@ class NoGoZoneApp:
         self.clear_current_polygon()
         self.mode = "no_go"
         self.canvas.config(cursor="cross")
+
+    def disable_shapes(self):
+        """ Disables shape selection when switching modes. """
+        for btn in self.shape_buttons.values():
+            btn.config(state=tk.DISABLED, bg="lightgray", fg="black")
+        self.selected_shape = None  # Reset selection
         
     def set_home_zone_mode(self):
         if not self.check_map_loaded():
             return
         self.mode = "home"
         self.edit_mode = False
-        self.cursor_mode = "circle"
+        self.selected_shape = None
+        self.canvas.config(cursor="circle")
         
     def enable_edit_mode(self):
         if not self.check_map_loaded():
             return
         self.edit_mode = True
-        self.cursor_mode = "arrow"
+        self.mode = None  # Disable no-go and home zone drawing
+        self.selected_shape = None
+        self.canvas.config(cursor="arrow")
     
     def delete_all_zones(self):
+        """ Deletes all no-go zones and the home zone. """
         if not self.check_map_loaded():
             return
+        
+        # Delete all no-go zones
+        for shape in self.no_go_shapes:
+            self.canvas.delete(shape)
+        self.no_go_shapes.clear()
+
+        # Delete all no-go polygons
         for polygon in self.no_go_polygons:
             self.canvas.delete(polygon)
         self.no_go_polygons.clear()
+
+        # Delete home zone if it exists
         if self.home_rectangle:
             self.canvas.delete(self.home_rectangle)
             self.home_rectangle = None
             self.home_zone = None
-        self.cursor_mode = "arrow"
-        self.canvas.config(cursor=self.cursor_mode)
+
+        self.selected_shape = None  # Reset selected shape
         
     def load_maps(self):
         self.clear_preview_frame()
@@ -452,6 +605,7 @@ class NoGoZoneApp:
         # Add back button ON the canvas, floating at top-left
         self.back_button = tk.Button(self.canvas, text="← Back", command=self.back_to_map_selection)
         self.canvas.create_window(10, 10, anchor="nw", window=self.back_button)
+        self.enable_editing_buttons()
 
     def back_to_map_selection(self):
         # Clear the canvas
@@ -465,6 +619,38 @@ class NoGoZoneApp:
         # Restore the map preview frame
         self.map_preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.load_maps()
+        self.disable_editing_buttons()
+        self.reset_button_highlights()
+
+    
+    def reset_button_highlights(self):
+        """Resets all buttons to their default color."""
+        buttons_to_reset = [
+            self.no_go_button,
+            self.home_zone_button,
+            self.delete_all_button,
+            self.edit_zone_button
+        ]
+
+        for active_button in buttons_to_reset:
+            self.active_button.configure(style="TButton")
+
+    def disable_editing_buttons(self):
+        buttons_to_disable = [
+            self.no_go_button,
+            self.home_zone_button,
+            self.delete_all_button,
+            self.edit_zone_button
+        ]
+
+        for button in buttons_to_disable:
+            button.config(state=tk.DISABLED)
+
+        # Also disable shape selection buttons
+        self.disable_shapes()
+
+        # Force UI to update
+        self.root.update_idletasks()
 
     def clear_preview_frame(self):
         for widget in self.map_preview_frame.winfo_children():
@@ -481,51 +667,62 @@ class NoGoZoneApp:
         self.canvas.config(cursor=self.cursor_mode)
         
     def on_motion(self, event):
-        if self.edit_mode:
-            for polygon_id in self.no_go_polygons:
-                coords = self.canvas.coords(polygon_id)
-                for i in range(0, len(coords), 2):
-                    if abs(event.x - coords[i]) < 10 and abs(event.y - coords[i+1]) < 10:
-                        self.canvas.config(cursor="hand2")  # Vertex hover
-                        return
-                cx = sum(coords[::2]) / (len(coords) // 2)
-                cy = sum(coords[1::2]) / (len(coords) // 2)
-                if abs(event.x - cx) < 15 and abs(event.y - cy) < 15:
-                    self.canvas.config(cursor="fleur")  # Center hover
-                    return
-            self.canvas.config(cursor="arrow")
-        else:
+        if not self.edit_mode:
             self.canvas.config(cursor=self.cursor_mode)
+            return
+
+        self.selected_shape = None  # Reset selected shape unless found
+        for shape in self.no_go_shapes:
+            coords = self.canvas.coords(shape)
+
+            # Check for hovering over vertices
+            for i in range(0, len(coords), 2):
+                vx, vy = coords[i], coords[i + 1]
+                if abs(event.x - vx) < 10 and abs(event.y - vy) < 10:
+                    self.canvas.config(cursor="hand2")  # Indicate vertex hover
+                    self.selected_shape = (shape, 'vertex', i)  # Store shape, mode, and vertex index
+                    return
+
+            # Check for hovering over the center of the shape
+            cx = sum(coords[::2]) / (len(coords) // 2)
+            cy = sum(coords[1::2]) / (len(coords) // 2)
+            if abs(event.x - cx) < 15 and abs(event.y - cy) < 15:
+                self.canvas.config(cursor="fleur")  # Indicate move cursor
+                self.selected_shape = (shape, 'move', event.x, event.y)  # Store shape, mode, and initial position
+                return
+
+        self.canvas.config(cursor="arrow")  # Reset cursor if not hovering
         
     def on_press(self, event):
         if self.edit_mode:
-            for polygon_id in self.no_go_polygons:
-                coords = self.canvas.coords(polygon_id)
+            for shape in self.no_go_shapes:
+                coords = self.canvas.coords(shape)
                 for i in range(0, len(coords), 2):
                     vx, vy = coords[i], coords[i+1]
                     if abs(event.x - vx) < 10 and abs(event.y - vy) < 10:
-                        self.selected_shape = (polygon_id, 'vertex', i)
+                        self.selected_shape = (shape, 'vertex', i)
                         return
 
                 cx = sum(coords[::2]) / (len(coords) // 2)
                 cy = sum(coords[1::2]) / (len(coords) // 2)
                 if abs(event.x - cx) < 15 and abs(event.y - cy) < 15:
-                    self.selected_shape = (polygon_id, 'move', event.x, event.y)
+                    self.selected_shape = (shape, 'move', event.x, event.y)
                     return
-        elif self.mode == "no_go":
-            if self.current_polygon_points:
-                last_x, last_y = self.current_polygon_points[-1]
-                line = self.canvas.create_line(last_x, last_y, event.x, event.y, fill="black")
-                self.current_polygon_lines.append(line)
-            self.current_polygon_points.append((event.x, event.y))
-            if len(self.current_polygon_points) > 2 and self.is_polygon_closed():
-                self.finish_polygon()
+        elif self.mode == "no_go" and self.selected_shape:
+            if self.is_inside_home_zone(event.x, event.y):
+                self.show_warning("Cannot place a No-Go Zone over the Home Zone.")
+                return
+            self.start_x, self.start_y = event.x, event.y
+            self.current_preview = None  # Reset preview
         elif self.mode == "home":
             if self.is_point_inside_no_go_zone(event.x, event.y):
                 self.show_warning("Cannot place the Home Zone inside a No-Go Zone.")
                 return
+
+            # Remove existing home zone if one exists
             if self.home_rectangle:
                 self.canvas.delete(self.home_rectangle)
+
             self.home_zone = (event.x, event.y)
             self.home_rectangle = self.canvas.create_oval(
                 event.x - 10, event.y - 10, event.x + 10, event.y + 10, fill="blue", outline="blue"
@@ -538,52 +735,42 @@ class NoGoZoneApp:
             return (hx-10 <= x <= hx+10 and hy-10 <= y <= hy+10)
         return False
     
+    
     def is_polygon_over_home_zone(self, polygon_coords):
+        """Check if a no-go zone overlaps with the home zone."""
         if not self.home_zone:
             return False
 
-        # Flatten the list if needed
-        flat_coords = []
-        for point in polygon_coords:
-            if isinstance(point, tuple):
-                flat_coords.extend(point)
-            else:
-                flat_coords.append(point)
-
         hx, hy = self.home_zone
-        radius = 10  # Same as your home zone radius
-
-        # Sample around the home zone's circumference
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            point_x = hx + radius * math.cos(rad)
-            point_y = hy + radius * math.sin(rad)
-            if self.point_in_polygon(point_x, point_y, flat_coords):
+        for i in range(0, len(polygon_coords), 2):
+            if abs(hx - polygon_coords[i]) < 10 and abs(hy - polygon_coords[i+1]) < 10:
                 return True
-
-        # Also check the center
-        if self.point_in_polygon(hx, hy, flat_coords):
-            return True
-
         return False
 
     def is_point_inside_no_go_zone(self, x, y):
-        for polygon_id in self.no_go_polygons:
-            coords = self.canvas.coords(polygon_id)
+        for shape in self.no_go_shapes:
+            coords = self.canvas.coords(shape)
             if self.point_in_polygon(x, y, coords):
                 return True
         return False
 
     def point_in_polygon(self, x, y, poly_coords):
-        num = len(poly_coords)
-        j = num - 2
+        """Check if a point (x, y) is inside a polygon using the ray-casting algorithm."""
+        num = len(poly_coords) // 2  # Number of vertices
         inside = False
-        for i in range(0, num, 2):
-            xi, yi = poly_coords[i], poly_coords[i + 1]
-            xj, yj = poly_coords[j], poly_coords[j + 1]
-            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-10) + xi):
-                inside = not inside
-            j = i
+        j = num - 1  # Last vertex index
+
+        for i in range(num):
+            xi, yi = poly_coords[2 * i], poly_coords[2 * i + 1]  # Current vertex
+            xj, yj = poly_coords[2 * j], poly_coords[2 * j + 1]  # Previous vertex
+
+            if ((yi > y) != (yj > y)) and (
+                x < (xj - xi) * (y - yi) / (yj - yi + 1e-10) + xi
+            ):
+                inside = not inside  # Flip the flag
+
+            j = i  # Move to the next vertex
+
         return inside
 
     def clear_current_polygon(self):
@@ -603,42 +790,125 @@ class NoGoZoneApp:
         self.current_polygon = []
 
     def on_drag(self, event):
+        if self.mode == "no_go" and self.selected_shape:
+            if self.current_preview:
+                self.canvas.delete(self.current_preview)  # Remove old preview
+
+            self.current_preview = self.create_shape(self.start_x, self.start_y, event.x, event.y, preview=True)
         if not self.edit_mode or not self.selected_shape:
             return
 
-        polygon_id, mode, *data = self.selected_shape
-        coords = self.canvas.coords(polygon_id)
+        shape, mode, *data = self.selected_shape
+        coords = self.canvas.coords(shape)
 
-        if mode == 'vertex':
+        if mode == 'vertex':  # Resizing
             index = data[0]
             coords[index] = event.x
             coords[index + 1] = event.y
-            if self.home_zone and self.is_polygon_over_home_zone(coords):
-                self.show_warning("Cannot move a No-Go Zone over the Home Zone.")
-                return
-            self.canvas.coords(polygon_id, *coords)
 
-        elif mode == 'move':
+            # Prevent resizing into home zone
+            if self.home_zone and self.is_polygon_over_home_zone(coords):
+                self.show_warning("Cannot resize No-Go Zone into Home Zone.")
+                return
+
+            self.canvas.coords(shape, *coords)
+
+        elif mode == 'move':  # Moving
             start_x, start_y = data
             dx = event.x - start_x
             dy = event.y - start_y
             new_coords = [c + dx if i % 2 == 0 else c + dy for i, c in enumerate(coords)]
+
+            # Prevent moving into home zone
             if self.home_zone and self.is_polygon_over_home_zone(new_coords):
-                self.show_warning("Cannot move a No-Go Zone over the Home Zone.")
+                self.show_warning("Cannot move No-Go Zone over Home Zone.")
                 return
-            self.canvas.coords(polygon_id, *new_coords)
-            self.selected_shape = (polygon_id, 'move', event.x, event.y)
+
+            self.canvas.coords(shape, *new_coords)
+            self.selected_shape = (shape, 'move', event.x, event.y)  # Update position
+
+            if shape == self.home_rectangle and self.is_point_inside_no_go_zone(event.x, event.y):
+                self.show_warning("Cannot move Home Zone into a No-Go Zone.")
+                return
+
+            self.canvas.coords(shape, *new_coords)
+            self.selected_shape = (shape, 'move', event.x, event.y)
 
         
     def on_release(self, event):
-        self.selected_shape= None
+        """ Finalizes the shape when the user releases the mouse button. """
+        if self.mode == "no_go" and self.selected_shape:
+            x1, y1 = self.start_x, self.start_y
+            x2, y2 = event.x, event.y
+
+            self.canvas.delete("preview")  # Remove preview
+
+            if self.selected_shape == "Circle":
+                radius = max(abs(x2 - x1), abs(y2 - y1)) // 2
+                shape = self.canvas.create_oval(x1 - radius, y1 - radius, x1 + radius, y1 + radius, outline="black", fill="black")
+
+            elif self.selected_shape == "Oval":
+                shape = self.canvas.create_oval(x1, y1, x2, y2, outline="black", fill="black")
+
+            elif self.selected_shape == "Square":
+                side = max(abs(x2 - x1), abs(y2 - y1))
+                shape = self.canvas.create_rectangle(x1, y1, x1 + side, y1 + side, outline="black", fill="black")
+
+            elif self.selected_shape == "Triangle":
+                points = [x1, y2, (x1 + x2) // 2, y1, x2, y2]
+                shape = self.canvas.create_polygon(points, outline="black", fill="black")
+
+            elif self.selected_shape == "Pentagon":
+                shape = self.draw_pentagon_final(x1, y1, x2, y2)
+
+            self.no_go_polygons.append(shape)
+
+    def draw_pentagon_preview(self, x1, y1, x2, y2):
+        """ Draws a preview of a pentagon. """
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        radius = max(abs(x2 - x1), abs(y2 - y1)) // 2
+
+        points = []
+        for i in range(5):
+            angle = math.radians(72 * i - 90)  # 5 sides, 72-degree angles
+            px = center_x + radius * math.cos(angle)
+            py = center_y + radius * math.sin(angle)
+            points.append(px)
+            points.append(py)
+
+        self.canvas.create_polygon(points, outline="black", fill="", tags="preview")
         
     def on_right_click(self, event):
-        for polygon in self.no_go_polygons:
-            if self.canvas.find_overlapping(event.x, event.y, event.x, event.y):
-                self.canvas.delete(polygon)
-                self.no_go_polygons.remove(polygon)
-                break
+        clicked_shapes = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+
+        for shape in clicked_shapes:
+            if shape in self.no_go_shapes:  # Ensure deletion targets correct list
+                self.canvas.delete(shape)
+                self.no_go_shapes.remove(shape)
+                print("No-Go Zone deleted")  # Debugging print
+                return  # Stop after deleting the first detected shape
+
+        if self.home_rectangle and self.is_inside_home_zone(event.x, event.y):
+            self.canvas.delete(self.home_rectangle)
+            self.home_rectangle = None
+            self.home_zone = None
+
+    def draw_pentagon_final(self, x1, y1, x2, y2):
+        """ Draws a finalized pentagon after releasing the mouse button. """
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        radius = max(abs(x2 - x1), abs(y2 - y1)) // 2
+
+        points = []
+        for i in range(5):
+            angle = math.radians(72 * i - 90)
+            px = center_x + radius * math.cos(angle)
+            py = center_y + radius * math.sin(angle)
+            points.append(px)
+            points.append(py)
+
+        return self.canvas.create_polygon(points, outline="black", fill="black")
 
     def save_map_with_zones(self):
         if not self.check_map_loaded():
@@ -657,10 +927,10 @@ class NoGoZoneApp:
         annotated_map = self.map_image.copy().resize((original_width, original_height))
         draw = ImageDraw.Draw(annotated_map)
 
-        for polygon_id in self.no_go_polygons:
-            coords = self.canvas.coords(polygon_id)
+        for shape in self.no_go_shapes:
+            coords = self.canvas.coords(shape)
             if len(coords) < 6:  # Check for at least 3 points
-                print(f"Skipping invalid polygon with ID {polygon_id}, not enough points.")
+                print(f"Skipping invalid polygon with ID {shape}, not enough points.")
                 continue
             scaled_coords = [(x * scale_x, y * scale_y) for x, y in zip(coords[::2], coords[1::2])]
             draw.polygon(scaled_coords, fill="black", outline="black")
