@@ -35,6 +35,7 @@ class NoGoZoneApp:
         self.no_go_shapes = []  # Stores finalized no-go zones
         self.active_button = None 
         self.occupied_regions = []  # Stores occupied areas of No-Go Zones
+        self.original_no_go_positions = {}
         self.style = ttk.Style()
         self.style.configure("TButton", background="#D9D9D9", foreground="black", font=('TkDefaultFont', 12))  # Default style
         self.style.map("Active.TButton", background=[("active", "#FFD700"), ("!active", "#FFD700")])  # Gold for active
@@ -675,6 +676,8 @@ class NoGoZoneApp:
         for shape in self.no_go_shapes:
             coords = self.canvas.coords(shape)
 
+            self.original_no_go_positions[shape] = coords[:]
+
             # Check for hovering over vertices
             for i in range(0, len(coords), 2):
                 vx, vy = coords[i], coords[i + 1]
@@ -692,6 +695,87 @@ class NoGoZoneApp:
                 return
 
         self.canvas.config(cursor="arrow")  # Reset cursor if not hovering
+
+    def is_home_zone_inside_no_go(self, x, y, shape, coords):
+        """Check if the home zone at (x, y) is inside a no-go zone."""
+        shape_type = self.get_shape_type(shape)
+
+        if shape_type in ["Circle", "Oval"]:
+            return self.is_point_inside_circle(x, y, coords)
+        elif shape_type in ["Square", "Rectangle"]:
+            return self.is_point_inside_rectangle(x, y, coords)
+        elif shape_type in ["Triangle", "Pentagon"]:
+            return self.is_point_inside_polygon(x, y, coords)
+
+        return False  # Default to False if shape type is unknown
+
+
+    def is_no_go_zone_over_home_zone(self, polygon_coords):
+        """Check if a no-go zone overlaps with the home zone."""
+        if not self.home_zone:
+            return False  # No home zone exists yet
+
+        hx, hy = self.home_zone
+        for i in range(0, len(polygon_coords), 2):
+            px, py = polygon_coords[i], polygon_coords[i + 1]
+            if abs(hx - px) < 10 and abs(hy - py) < 10:
+                return True  # Found overlap
+        return False
+
+
+    def is_point_inside_circle(self, x, y, coords):
+        """Check if a point is inside a circular or oval no-go zone."""
+        x1, y1, x2, y2 = coords  # Bounding box of the oval
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2  # Center of the circle
+        radius = max(abs(x2 - x1), abs(y2 - y1)) / 2  # Approximate radius
+
+        return (x - cx) ** 2 + (y - cy) ** 2 < radius ** 2
+
+
+    def is_point_inside_rectangle(self, x, y, coords):
+        """Check if a point is inside a rectangular or square no-go zone."""
+        x1, y1, x2, y2 = coords
+        return x1 <= x <= x2 and y1 <= y <= y2
+
+
+    def is_point_inside_polygon(self, x, y, poly_coords):
+        """Check if a point is inside a polygon using the ray-casting algorithm."""
+        num = len(poly_coords) // 2  # Number of vertices
+        inside = False
+        j = num - 1  # Last vertex index
+
+        for i in range(num):
+            xi, yi = poly_coords[2 * i], poly_coords[2 * i + 1]  # Current vertex
+            xj, yj = poly_coords[2 * j], poly_coords[2 * j + 1]  # Previous vertex
+
+            if ((yi > y) != (yj > y)) and (
+                x < (xj - xi) * (y - yi) / (yj - yi + 1e-10) + xi
+            ):
+                inside = not inside  # Flip the flag
+
+            j = i  # Move to the next vertex
+
+        return inside
+
+
+    def get_shape_type(self, shape):
+        """Identify the type of shape based on its coordinates."""
+        coords = self.canvas.coords(shape)
+        if len(coords) == 4:
+            # Rectangles, squares, ovals, and circles all have 4 values (x1, y1, x2, y2)
+            width = abs(coords[2] - coords[0])
+            height = abs(coords[3] - coords[1])
+            if width == height:
+                return "Circle" if "oval" in self.canvas.gettags(shape) else "Square"
+            return "Oval" if "oval" in self.canvas.gettags(shape) else "Rectangle"
+
+        if len(coords) == 6:
+            return "Triangle"
+
+        if len(coords) == 10:
+            return "Pentagon"
+
+        return "Unknown"  # Fallback
         
     def on_press(self, event):
         if self.edit_mode:
@@ -715,9 +799,11 @@ class NoGoZoneApp:
             self.start_x, self.start_y = event.x, event.y
             self.current_preview = None  # Reset preview
         elif self.mode == "home":
-            if self.is_point_inside_no_go_zone(event.x, event.y):
-                self.show_warning("Cannot place the Home Zone inside a No-Go Zone.")
-                return
+            for shape in self.no_go_shapes:
+                coords = self.canvas.coords(shape)
+                if self.is_home_zone_inside_no_go(event.x, event.y, shape, coords):
+                    self.show_warning("Cannot place the Home Zone inside a No-Go Zone.")
+                    return
 
             # Remove existing home zone if one exists
             if self.home_rectangle:
@@ -797,6 +883,10 @@ class NoGoZoneApp:
             self.current_preview = self.create_shape(self.start_x, self.start_y, event.x, event.y, preview=True)
         if not self.edit_mode or not self.selected_shape:
             return
+        
+        shape, mode, *data = self.selected_shape
+        shape, mode, *data = self.selected_shape
+        coords = self.canvas.coords(shape)
 
         shape, mode, *data = self.selected_shape
         coords = self.canvas.coords(shape)
@@ -805,10 +895,22 @@ class NoGoZoneApp:
             index = data[0]
             coords[index] = event.x
             coords[index + 1] = event.y
+            shape_type = self.get_shape_type(shape)
+            is_invalid_resize = False
 
-            # Prevent resizing into home zone
-            if self.home_zone and self.is_polygon_over_home_zone(coords):
-                self.show_warning("Cannot resize No-Go Zone into Home Zone.")
+            if shape_type in ["Circle", "Oval"] and self.is_point_inside_circle(self.home_zone[0], self.home_zone[1], coords):
+                is_invalid_resize = True
+            elif shape_type in ["Square", "Rectangle"] and self.is_point_inside_rectangle(self.home_zone[0], self.home_zone[1], coords):
+                is_invalid_resize = True
+            elif shape_type in ["Triangle", "Pentagon"] and self.is_point_inside_polygon(self.home_zone[0], self.home_zone[1], coords):
+                is_invalid_resize = True
+
+            if is_invalid_resize:
+                self.show_warning("Cannot resize No-Go Zone into the Home Zone.")
+
+                # Restore shape to its original size
+                if shape in self.original_no_go_positions:
+                    self.canvas.coords(shape, *self.original_no_go_positions[shape])
                 return
 
             self.canvas.coords(shape, *coords)
@@ -820,19 +922,28 @@ class NoGoZoneApp:
             new_coords = [c + dx if i % 2 == 0 else c + dy for i, c in enumerate(coords)]
 
             # Prevent moving into home zone
-            if self.home_zone and self.is_polygon_over_home_zone(new_coords):
-                self.show_warning("Cannot move No-Go Zone over Home Zone.")
+            shape_type = self.get_shape_type(shape)
+            is_invalid_move = False
+
+            if shape_type in ["Circle", "Oval"] and self.is_point_inside_circle(self.home_zone[0], self.home_zone[1], new_coords):
+                is_invalid_move = True
+            elif shape_type in ["Square", "Rectangle"] and self.is_point_inside_rectangle(self.home_zone[0], self.home_zone[1], new_coords):
+                is_invalid_move = True
+            elif shape_type in ["Triangle", "Pentagon"] and self.is_point_inside_polygon(self.home_zone[0], self.home_zone[1], new_coords):
+                is_invalid_move = True
+
+            if is_invalid_move:
+                self.show_warning("Cannot move No-Go Zone over the Home Zone.")
+
+                if shape in self.original_no_go_positions:
+                    self.canvas.coords(shape, *self.original_no_go_positions[shape])
                 return
 
-            self.canvas.coords(shape, *new_coords)
-            self.selected_shape = (shape, 'move', event.x, event.y)  # Update position
-
-            if shape == self.home_rectangle and self.is_point_inside_no_go_zone(event.x, event.y):
-                self.show_warning("Cannot move Home Zone into a No-Go Zone.")
-                return
+            
 
             self.canvas.coords(shape, *new_coords)
             self.selected_shape = (shape, 'move', event.x, event.y)
+
 
         
     def on_release(self, event):
