@@ -185,7 +185,7 @@ class BallDetector(Node):
     def image_callback(self, msg):
         try:
             # Convert ROS Image message to OpenCV format
-            print('Hi')
+
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
             # Process frame with YOLO
@@ -334,37 +334,63 @@ class BallDetector(Node):
     
     def send_home_goal(self, home_zone):
         """ Converts pixel-based home zone coordinates to real-world map coordinates and sends them as a goal. """
-
         if home_zone is None:
             self.get_logger().error("Home zone is not set! Cannot navigate home.")
             return
+        
+        x_current = self.current_pose.position.x
+        y_current = self.current_pose.position.y
+        qx = self.current_pose.orientation.x
+        qy = self.current_pose.orientation.y
+        qz = self.current_pose.orientation.z
+        qw = self.current_pose.orientation.w
+
+            # Convert quaternion to yaw angle
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+
 
         # Convert pixel-based home zone to real-world map coordinates (if needed)
         px, py = home_zone  # Received from frontend (assumed in pixels)
         map_resolution = 0.05  # Example: meters per pixel
-        map_origin = (-3.0, -4.0)  # Origin in meters
+        map_origin = (-3.0, -4.0)  # Origin in meters (update according to your map)
         image_height = 155  # Example map height in pixels
 
         wx = map_origin[0] + (px * map_resolution)
         wy = map_origin[1] + ((image_height - py) * map_resolution)
 
         self.get_logger().info(f"Returning to Home: {wx:.2f}, {wy:.2f}")
+        self.get_logger().info(f"Current Pose: {self.current_pose.position.x}, {self.current_pose.position.y}")
 
-        # Send goal to move the robot home
-        goal_msg = NavigateToPose.Goal()
-        goal_msg.pose.header.frame_id = "map"
-        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-        goal_msg.pose.pose.position.x = wx
-        goal_msg.pose.pose.position.y = wy
-           # goal_msg.pose.pose.orientation.x = quat[0]
-            #goal_msg.pose.pose.orientation.y = quat[1]
-        goal_msg.pose.pose.orientation.z = 1.0
-        goal_msg.pose.pose.orientation.w = 1.0
+        # Create the home goal message
+        goal_msg_home = NavigateToPose.Goal()
+        goal_msg_home.pose.header.frame_id = "map"
+        goal_msg_home.pose.header.stamp = self.get_clock().now().to_msg()
+        goal_msg_home.pose.pose.position.x = wx
+        goal_msg_home.pose.pose.position.y = wy
+        # For a stationary goal, you can set a neutral orientation.
+        yaw_to_goal = math.atan2(wx - y_current, wy - x_current)
+        quat = tf_transformations.quaternion_from_euler(0, 0, yaw_to_goal)
+        # You might want to set it explicitly to face forward:
+        goal_msg_home.pose.pose.orientation.x = quat[0]
+        goal_msg_home.pose.pose.orientation.y = quat[1]
+        goal_msg_home.pose.pose.orientation.z = quat[2]
+        goal_msg_home.pose.pose.orientation.w = quat[3]
 
-        self.nav_client.send_goal_async(goal_msg)
-        send_goal_future = self.nav_client.send_goal_async(goal_msg)
-        send_goal_future.add_done_callback(self.goal_response_callback)
-        
+        self.get_logger().info("Sending home goal...")
+
+        # Send the goal and block until it completes
+        send_goal_future = self.nav_client.send_goal_async(goal_msg_home)
+        rclpy.spin_until_future_complete(self, send_goal_future)
+        goal_handle = send_goal_future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error("Home goal was rejected!")
+            return
+
+        self.get_logger().info("Home goal accepted. Waiting for result...")
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result()
+        self.get_logger().info("Home goal reached. Stopping robot.")
 
     def send_navigation_goal(self, x_real, y_real):
 
@@ -412,10 +438,10 @@ class BallDetector(Node):
             goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
             goal_msg.pose.pose.position.x = x_map
             goal_msg.pose.pose.position.y = y_map
-           # goal_msg.pose.pose.orientation.x = quat[0]
-            #goal_msg.pose.pose.orientation.y = quat[1]
-            goal_msg.pose.pose.orientation.z = 1.0
-            goal_msg.pose.pose.orientation.w = 1.0
+            goal_msg.pose.pose.orientation.x = quat[0]
+            goal_msg.pose.pose.orientation.y = quat[1]
+            goal_msg.pose.pose.orientation.z = quat[2]
+            goal_msg.pose.pose.orientation.w = quat[3]
 
             self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
             self.get_logger().info(f"Robot pose ({x_current:.2f}, {y_current:.2f})")
