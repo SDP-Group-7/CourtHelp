@@ -56,52 +56,60 @@ class RemoteHandler(threading.Thread):
 
 
 def run_ros_package():
-    """triggers SLAM and the motions"""
+    """Triggers SLAM and the motions without opening a new terminal."""
     try:
-        #subprocess.Popen([shutil.which('xterm'), '-e', 'ros2', 'run', 'turtlebot3_teleop', 'teleop_keyboard'])
-
-        subprocess.Popen([shutil.which('xterm'), "-e", "ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"],
-                         stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL, start_new_session=True)
-
+        subprocess.Popen(
+            ["ros2", "launch", "turtlebot3_cartographer", "cartographer.launch.py"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setpgrp  # For Linux/Unix systems
+        )
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
 
 
 def run_ros_package2(save_path):
-    """saves map in current directory and closes stuff"""
+    """Saves map in current directory and closes stuff without opening a new terminal."""
     try:
         print("Checking if ROS map server is ready...")
         time.sleep(5)
-        #save_path = os.path.expanduser("~/map")
-        subprocess.run([shutil.which('xterm'), "-e", "ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path],
-                         stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(
+            ["ros2", "run", "nav2_map_server", "map_saver_cli", "-f", save_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
     except subprocess.CalledProcessError as e:
         print("Error running ROS package:", e)
 
 
 def start_navigation_server(map_path):
     print(map_path)
-    """ Starts the TurtleBot3 Navigation Server with a specific map using subprocess. """
+    """Starts the TurtleBot3 Navigation Server with a specific map in the background."""
     try:
         subprocess.Popen(
-                [shutil.which('xterm'), '-e', 'ros2', 'launch', 'nav2_bringup', 'localization_launch.py',
-                'map:=map2.yaml']
-                )
+            ["ros2", "launch", "nav2_bringup", "localization_launch.py", "map:=map2.yaml"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setpgrp
+        )
         time.sleep(5)
         
         subprocess.Popen(
-                [shutil.which('xterm'), '-e', 'ros2', 'launch', 'turtlebot3_navigation2', 'navigation2.launch.py',
-                'map:=map2.yaml', 'use_sim_time:=False']
-            )
+            ["ros2", "launch", "turtlebot3_navigation2", "navigation2.launch.py", "map:=map2.yaml", "use_sim_time:=False"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setpgrp
+        )
         # Wait before setting initial pose
         time.sleep(5)
-
-        #Set Initial Pose Automatically
-        subprocess.Popen([
-            shutil.which('xterm'), '-e', 'python3', 'initial_pose.py'
-        ])
+        
+        subprocess.Popen(
+            ["python3", "initial_pose.py"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setpgrp
+        )
         
     except Exception as e:
         print(f"Error starting Navigation Server: {e}")
@@ -149,7 +157,7 @@ class BallDetector(Node):
         self.rotating = False 
 
         self.cumulative_rotation = 0       # Total degrees rotated in search mode
-        self.search_rotation_angle =30      # Rotate 90° each time when no ball detected
+        self.search_rotation_angle =10      # Rotate 90° each time when no ball detected
         self.mode = "search" 
 
         # ROS 2 Navigation Client
@@ -185,6 +193,8 @@ class BallDetector(Node):
     def image_callback(self, msg):
         try:
             # Convert ROS Image message to OpenCV format
+            if self.mode != "search":
+                return
 
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
@@ -210,7 +220,7 @@ class BallDetector(Node):
                     detected_balls.append((x1, y1, x2, y2, confidence))
             if detected_balls:
                 #self.rotating = False
-                self.mode = "tracking"
+                self.mode = "navigating"
                 self.cumulative_rotation = 0.0
                 self.rotating = False
                 for (x1, y1, x2, y2, confidence) in detected_balls:
@@ -252,7 +262,7 @@ class BallDetector(Node):
                     self.send_home_goal(self.home_zone)
                     self.rotation_count = 0'''
                 if not self.rotating:
-                    self.mode = "tracking"
+                    self.mode = "rotating"
                     self.rotating = True
                     self.create_timer(5.0, self.rotate_and_reset)
 
@@ -266,7 +276,7 @@ class BallDetector(Node):
 
     def rotate_robot(self, degrees):
         twist_msg = Twist()
-        angular_speed = 0.1  # rad/s, adjust as needed
+        angular_speed = 0.3  # rad/s, adjust as needed
         angle_radians = math.radians(degrees)
         
         # Set angular velocity in the desired direction:
@@ -442,10 +452,10 @@ class BallDetector(Node):
             goal_msg.pose.pose.orientation.y = quat[1]
             goal_msg.pose.pose.orientation.z = quat[2]
             goal_msg.pose.pose.orientation.w = quat[3]
+            self.mode = "navigating"
 
             self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
             self.get_logger().info(f"Robot pose ({x_current:.2f}, {y_current:.2f})")
-            self.nav_client.send_goal_async(goal_msg)
             send_goal_future = self.nav_client.send_goal_async(goal_msg)
             send_goal_future.add_done_callback(self.goal_response_callback)
 
@@ -458,12 +468,11 @@ class BallDetector(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().error("Goal was rejected!")
+            self.mode = "search"
             return
         
         self.get_logger().info("Goal accepted!")
         self.current_goal_handle = goal_handle
-        
-        # Wait for completion
         get_result_future = goal_handle.get_result_async()
         get_result_future.add_done_callback(self.goal_completed_callback)
 
@@ -475,6 +484,7 @@ class BallDetector(Node):
         # Clear current goal handle so a new goal can be sent
         self.current_goal_handle = None
         self.rotating = False
+        self.mode = "search"
 
 def main(map_path, home_zone, args=None):
     #rem_handle = RemoteHandler()
