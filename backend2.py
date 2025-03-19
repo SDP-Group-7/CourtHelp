@@ -201,6 +201,9 @@ class BallDetector(Node):
             # Process frame with YOLO
             results = self.model(frame, device="cpu")
             detections = results[0]
+            
+            # record timestamp
+            image_time = msg.header.stamp
 
             cv2.imshow("Ball Detection", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -217,39 +220,45 @@ class BallDetector(Node):
                 class_name = detections.names[class_id]
 
                 if class_name in ["orange", "sports ball"] and confidence > 0.3:
-                    detected_balls.append((x1, y1, x2, y2, confidence))
+
+                    x_center = (x1 + x2) // 2
+                    y_center = (y1 + y2) // 2
+                    box_width = x2 - x1
+                    box_height = y2 - y1
+
+                    if is_valid_ratio:
+                        aspect_ratio = box_width / box_height
+                        is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
+
+                        # calculate position with cordinate related to robot
+                        pixel_size = max(box_width, box_height)
+                        Z = self.calculate_distance(self.FOCAL_LENGTH, self.REAL_DIAMETER, pixel_size)
+                        x_real = (x_center - frame.shape[1] // 2) * Z / self.FOCAL_LENGTH
+                        y_real = (y_center - frame.shape[0] // 2) * Z / self.FOCAL_LENGTH
+
+                        # check the location related to robot
+                        self.get_logger().info(f"Detected ball in camera frame at: X={x_real:.3f}, Y={y_real:.3f}")
+
+                        # calling function to calculate global position of each balls
+                        x_map, y_map = self.calculate_global_position(x_real, y_real, image_time)
+                    
+                    detected_balls.append((x_map, y_map, confidence))
+
+
             if detected_balls:
                 #self.rotating = False
                 self.mode = "navigating"
                 self.cumulative_rotation = 0.0
                 self.rotating = False
-                for (x1, y1, x2, y2, confidence) in detected_balls:
-                    x_center, y_center = (x1 + x2) // 2, (y1 + y2) // 2
-                    box_width = x2 - x1
-                    box_height = y2 - y1
 
-                    aspect_ratio = box_width / box_height
-                    is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
-
-                    #yaw_angle = math.degrees(math.atan2((x_center - CX), self.FOCAL_LENGTH))
-                    yaw_angle = math.degrees(math.atan2((CX - x_center), self.FOCAL_LENGTH))
-
-
-                    if is_valid_ratio:
-                        pixel_size = max(box_width, box_height)
-                        Z = self.calculate_distance(self.FOCAL_LENGTH, self.REAL_DIAMETER, pixel_size)
-
-                        X_robot, Y_robot, Z_robot, _ = self.calculate_robot_position(
-                            x_center, y_center, pixel_size, frame.shape[1], frame.shape[0]
-                        )
-
-                        X, Y = self.calculate_xy(Z, yaw_angle)
-
-                        self.get_logger().info(f"Ball detected at: X={X:.3f}m, Y={Y:.3f}m, Z={Z:.3f}m, Angle={yaw_angle:.1f}°")
+                for x_map, y_map, confidence in detected_balls:
+                    self.get_logger().info(f"Ball detected at: X={x_map:.3f}, Y={y_map:.3f}")
+                    self.ball_list.append((x_map, y_map))
 
                         # Send Navigation Goal
-                        self.send_navigation_goal(X, Y)
-                        return  
+                if len(self.ball_list) > 0:
+                    x_goal, y_goal = self.ball_list.pop(0)
+                    self.send_navigation_goal(x_goal, y_goal)
             else:
                 '''if self.rotation_count < 4:
                     if not self.rotating:
@@ -343,6 +352,7 @@ class BallDetector(Node):
         return x, y
     
     def send_home_goal(self, home_zone):
+
         """ Converts pixel-based home zone coordinates to real-world map coordinates and sends them as a goal. """
         if home_zone is None:
             self.get_logger().error("Home zone is not set! Cannot navigate home.")
@@ -401,8 +411,40 @@ class BallDetector(Node):
         rclpy.spin_until_future_complete(self, result_future)
         result = result_future.result()
         self.get_logger().info("Home goal reached. Stopping robot.")
+    
+    # extact position calculation from send_navigation_goal, and calling this function in image_callback
+    def calculate_global_position(self, x_real, y_real, image_time):
+        try:
+            # get robot pose from same timestamp as image
+            trans = self.tf_buffer.lookup_transform(
+                'map', 'base_link', image_time
+            )
+            
+            x_current = trans.transform.translation.x
+            y_current = trans.transform.translation.y
 
-    def send_navigation_goal(self, x_real, y_real):
+            qx = trans.transform.rotation.x
+            qy = trans.transform.rotation.y
+            qz = trans.transform.rotation.z
+            qw = trans.transform.rotation.w
+
+            yaw = math.atan2(2.0 * (qw * qz + qx * qy),
+                            1.0 - 2.0 * (qy * qy + qz * qz))
+
+            # calculate global position
+            x_map = x_current + (x_real * math.cos(yaw) - y_real * math.sin(yaw))
+            y_map = y_current + (x_real * math.sin(yaw) + y_real * math.cos(yaw))
+            
+            # # check the location related to global
+            self.get_logger().info(f"Detected ball in map frame at: X={x_map:.3f}, Y={y_map:.3f}")
+
+            return x_map, y_map
+
+        except Exception as e:
+            self.get_logger().warn(f"Failed to calculate global position: {e}")
+            return None, None
+
+    def send_navigation_goal(self, x_map, y_map):
 
         try:
 
@@ -428,15 +470,8 @@ class BallDetector(Node):
             # Convert quaternion to yaw angle
             yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
-            # Transform relative coordinates into the map frame
-            x_map = x_current + (x_real * math.cos(yaw) - y_real * math.sin(yaw))
-            y_map = y_current + (x_real * math.sin(yaw) + y_real * math.cos(yaw))
-
-
-            yaw_to_goal = math.atan2(y_map - y_current, x_map - x_current)
-
-            # Convert yaw to quaternion for ROS2 navigation goal
-            #yaw_to_goal = math.atan2(y_real, x_real)
+            yaw_to_goal = math.atan2(y_map - self.current_pose.position.y, 
+                                    x_map - self.current_pose.position.x)
 
             # Convert yaw to quaternion
             quat = tf_transformations.quaternion_from_euler(0, 0, yaw_to_goal)
@@ -455,7 +490,7 @@ class BallDetector(Node):
             self.mode = "navigating"
 
             self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
-            self.get_logger().info(f"Robot pose ({x_current:.2f}, {y_current:.2f})")
+            
             send_goal_future = self.nav_client.send_goal_async(goal_msg)
             send_goal_future.add_done_callback(self.goal_response_callback)
 
@@ -485,6 +520,11 @@ class BallDetector(Node):
         self.current_goal_handle = None
         self.rotating = False
         self.mode = "search"
+
+        # searching for the next
+        if len(self.ball_list) > 0:
+            x_goal, y_goal = self.ball_list.pop(0)
+            self.send_navigation_goal(x_goal, y_goal)
 
 def main(map_path, home_zone, args=None):
     #rem_handle = RemoteHandler()
