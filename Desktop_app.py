@@ -284,7 +284,7 @@ class NoGoZoneApp:
             filetypes=[("YAML Files", "*.yaml")]
         )
         if map_path:
-            backend.main(map_path)
+            backend.main(map_path, self.home_zone) #'''self.home_zone'''
         else:
             self.show_warning("No map selected. Please select a map to start the robot.")
 
@@ -813,6 +813,7 @@ class NoGoZoneApp:
             self.home_rectangle = self.canvas.create_oval(
                 event.x - 10, event.y - 10, event.x + 10, event.y + 10, fill="blue", outline="blue"
             )
+            print(self.home_zone)
 
             
     def is_inside_home_zone(self, x, y):
@@ -1048,7 +1049,8 @@ class NoGoZoneApp:
 
         x, y = self.home_zone
         x, y = x * scale_x, y * scale_y
-        draw.ellipse([x - 10 * scale_x, y - 10 * scale_y, x + 10 * scale_x, y + 10 * scale_y], fill="blue", outline="blue")
+        self.home_zone = x, y
+        #draw.ellipse([x - 10 * scale_x, y - 10 * scale_y, x + 10 * scale_x, y + 10 * scale_y], fill="blue", outline="blue")
 
         file_path = filedialog.asksaveasfilename(defaultextension=".pgm", filetypes=[("PGM Files", "*.pgm")])
         if file_path:
@@ -1057,7 +1059,7 @@ class NoGoZoneApp:
 
             yaml_content = f"""image: {map_filename}
 resolution: 0.05
-origin: [0.0, 0.0, 0.0]
+origin: [-3.0, -4.0, 0.0]
 occupied_thresh: 0.65
 free_thresh: 0.25
 negate: 0
@@ -1068,7 +1070,11 @@ mode: trinary
                 yaml_file.write(yaml_content)
 
             print("Map and YAML file saved at:", file_path)
-            backend.map_filename = map_filename
+            
+            yaml_filename = os.path.basename(yaml_path)
+            backend.map_filename = yaml_filename
+            backend.home_zone = self.home_zone
+            print(self.home_zone)
 
 if __name__ == "__main__":
     root = tk.Tk()
