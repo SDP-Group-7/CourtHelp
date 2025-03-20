@@ -122,6 +122,10 @@ class BallDetector(Node):
         # Subscribe to TurtleBot's camera feed
         self.current_goal_handle = None
         self.home_zone = home_zone
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.ball_list = []
         
         self.subscription = self.create_subscription(
             Image,
@@ -210,7 +214,6 @@ class BallDetector(Node):
                 self.get_logger().info("Exiting camera stream...")
                 rclpy.shutdown()
 
-            CX, CY = frame.shape[1] // 2, frame.shape[0] // 2
             detected_balls = []
 
             for box in detections.boxes:
@@ -226,9 +229,9 @@ class BallDetector(Node):
                     box_width = x2 - x1
                     box_height = y2 - y1
 
+                    aspect_ratio = box_width / box_height
+                    is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
                     if is_valid_ratio:
-                        aspect_ratio = box_width / box_height
-                        is_valid_ratio = 0.7 <= aspect_ratio <= 1.3
 
                         # calculate position with cordinate related to robot
                         pixel_size = max(box_width, box_height)
@@ -238,10 +241,11 @@ class BallDetector(Node):
 
                         # check the location related to robot
                         self.get_logger().info(f"Detected ball in camera frame at: X={x_real:.3f}, Y={y_real:.3f}")
-
                         # calling function to calculate global position of each balls
+                        
                         x_map, y_map = self.calculate_global_position(x_real, y_real, image_time)
-                    
+
+                        
                     detected_balls.append((x_map, y_map, confidence))
 
 
@@ -416,24 +420,33 @@ class BallDetector(Node):
     def calculate_global_position(self, x_real, y_real, image_time):
         try:
             # get robot pose from same timestamp as image
-            trans = self.tf_buffer.lookup_transform(
-                'map', 'base_link', image_time
-            )
-            
-            x_current = trans.transform.translation.x
-            y_current = trans.transform.translation.y
+            if self.current_pose is None:
+                self.get_logger().warn("Waiting for AMCL pose...")
+                for _ in range(60):
+                    rclpy.spin_once(self, timeout_sec=1.0)
+                    #if self.current_pose is not None:
+                        #break
+                
+                if self.current_pose is None:
+                    self.get_logger().error("AMCL pose not received after timeout, cannot calculate goal.")
+                    return
+            x_robot = x_real + self.CAMERA_FORWARD
+            y_robot = y_real
 
-            qx = trans.transform.rotation.x
-            qy = trans.transform.rotation.y
-            qz = trans.transform.rotation.z
-            qw = trans.transform.rotation.w
+            x_current = self.current_pose.position.x
+            y_current = self.current_pose.position.y
+            qx = self.current_pose.orientation.x
+            qy = self.current_pose.orientation.y
+            qz = self.current_pose.orientation.z
+            qw = self.current_pose.orientation.w
 
-            yaw = math.atan2(2.0 * (qw * qz + qx * qy),
-                            1.0 - 2.0 * (qy * qy + qz * qz))
+            # check the location related to robot
+            self.get_logger().info(f"Detected ball in camera frame at: X={x_real:.3f}, Y={y_real:.3f}")
+            yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
-            # calculate global position
-            x_map = x_current + (x_real * math.cos(yaw) - y_real * math.sin(yaw))
-            y_map = y_current + (x_real * math.sin(yaw) + y_real * math.cos(yaw))
+            # calling function to calculate global position of each balls
+            x_map = x_current + (x_robot * math.cos(yaw)) - y_robot * math.sin(yaw)
+            y_map = y_current + (x_robot * math.sin(yaw)) - y_robot * math.cos(yaw)
             
             # # check the location related to global
             self.get_logger().info(f"Detected ball in map frame at: X={x_map:.3f}, Y={y_map:.3f}")
