@@ -88,7 +88,7 @@ def start_navigation_server(map_path):
     """Starts the TurtleBot3 Navigation Server with a specific map in the background."""
     try:
         subprocess.Popen(
-            ["ros2", "launch", "nav2_bringup", "localization_launch.py", "map:=map2.yaml"],
+            ["ros2", "launch", "nav2_bringup", "localization_launch.py", "map:=" + map_filename],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             preexec_fn=os.setpgrp
@@ -96,7 +96,7 @@ def start_navigation_server(map_path):
         time.sleep(5)
         
         subprocess.Popen(
-            ["ros2", "launch", "turtlebot3_navigation2", "navigation2.launch.py", "map:=map2.yaml", "use_sim_time:=False"],
+            ["ros2", "launch", "turtlebot3_navigation2", "navigation2.launch.py", "map:=" + map_filename, "use_sim_time:=False"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             preexec_fn=os.setpgrp
@@ -489,6 +489,7 @@ def main(map_path, home_zone, args=None):
     #rem_handle = RemoteHandler()
     #rem_handle.start()
     #node = BallDetector(rem_handle, map_path)
+    #print(map_filename)
     start_navigation_server(map_path)
     node = BallDetector(map_path, home_zone)  
     mode = "off"
