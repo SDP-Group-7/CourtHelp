@@ -163,6 +163,7 @@ class BallDetector(Node):
         # ROS 2 Navigation Client
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.command_lock = False
         
         self.get_logger().info("Ball detector node started")
     '''
@@ -192,10 +193,7 @@ class BallDetector(Node):
 
     def image_callback(self, msg):
         try:
-            # Convert ROS Image message to OpenCV format
-            if self.mode != "search":
-                return
-
+        
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
             # Process frame with YOLO
@@ -294,9 +292,8 @@ class BallDetector(Node):
 
     def rotate_and_reset(self):
         """ Rotate the robot and then reset the flag after 5 seconds. """
-        if not self.rotating:
+        if not self.rotating or self.command_lock:
             return
-        # Rotate by a fixed angle (e.g., 90 degrees)
         self.rotate_robot(self.search_rotation_angle)
         self.cumulative_rotation += self.search_rotation_angle
         self.get_logger().info(f"Cumulative rotation: {self.cumulative_rotation}°")
@@ -456,6 +453,7 @@ class BallDetector(Node):
 
             self.get_logger().info(f"Sending TurtleBot to ({x_map:.2f}, {y_map:.2f})m in the map frame")
             self.get_logger().info(f"Robot pose ({x_current:.2f}, {y_current:.2f})")
+            self.command_lock = True
             send_goal_future = self.nav_client.send_goal_async(goal_msg)
             send_goal_future.add_done_callback(self.goal_response_callback)
 
@@ -485,6 +483,7 @@ class BallDetector(Node):
         self.current_goal_handle = None
         self.rotating = False
         self.mode = "search"
+        self.command_lock = False
 
 def main(map_path, home_zone, args=None):
     #rem_handle = RemoteHandler()
