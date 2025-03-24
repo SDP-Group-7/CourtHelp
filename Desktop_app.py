@@ -2,6 +2,7 @@ import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import filedialog, Canvas, messagebox
 from PIL import Image, ImageTk, ImageDraw
+#import backend2 as backend
 import backend
 import os
 import subprocess
@@ -11,8 +12,8 @@ import glob
 from PIL import ImageOps
 import math
 from tkinter import filedialog
-
-PANEL_BG="#14213d"
+    
+PANEL_BG="#194d19"
 class NoGoZoneApp:
     def __init__(self, root):
         self.root = root
@@ -82,7 +83,7 @@ class NoGoZoneApp:
         self.map_preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self.custom_step_label(self.control_frame,"Step 1: Configure the Robot")
-        self.configure_button = self.custom_button(self.control_frame, text="Configure", command=self.configure_robot, tooltip="Start robot configuration, move the robot using the keys below until you are satisfied with the area it overed. If you already have a map you may skip this step.")
+        self.configure_button = self.custom_button(self.control_frame, text="Configure", command=self.configure_robot, tooltip="Start robot configuration: move the robot using the keys below until you are satisfied with the area it covered. If you already have a map, skip this step.")
 
         # Frame for the control buttons
         self.control_box_frame = tk.Frame(self.control_frame, bg=PANEL_BG)
@@ -125,10 +126,10 @@ class NoGoZoneApp:
         self.save_map_button = self.custom_button(self.control_frame, text="Finish Configuration", command=self.finish_configuration, tooltip="Save the map created by the robot")
 
         self.custom_step_label(self.control_frame, "Step 2: Load Map")
-        self.load_map_button = self.custom_button(self.control_frame, text="Load Map", command=self.load_maps, tooltip="This is bring up a browser of all your pgm maps where you can preview them and chose to edit. You may use the back button to go back from editing to the browser")
+        self.load_map_button = self.custom_button(self.control_frame, text="Load Map", command=self.load_maps, tooltip="This brings up a browser of all your pgm maps where you can preview and edit them. Use the back button to go back from editing to the browser")
 
         self.custom_step_label(self.control_frame,"Step 3: Mark Map")
-        self.no_go_button= self.custom_button(self.control_frame, text="Draw No-Go Zone",command=self.set_no_go_mode, tooltip="Click on the map to create a starting point and the subsequent ones too, the shape will automatically be created once the points overlap. Right click a the zone to delete.\n A No-Go Zone is an area the robot is forbidden from entering such as the benches for players, an open door or other obstacles too high or low for the LIDAR sensor to detect.")
+        self.no_go_button= self.custom_button(self.control_frame, text="Draw No-Go Zone",command=self.set_no_go_mode, tooltip="Click on a shape to create a no-go zone of your choice. Right click a the zone to delete.\n A No-Go Zone is an area the robot is forbidden from entering.")
         self.home_zone_button = self.custom_button(self.control_frame, text="Draw Home Zone", command=self.set_home_zone_mode, tooltip="Click position to place a Home zone (blue circle). The robot returns to the home zone after collecting all balls. There must be exactly 1 home zone in the map and shall not overlap with no-go zones.") 
         self.delete_all_button = self.custom_button(self.control_frame, text="Delete All Zones", command=self.delete_all_zones, tooltip="Click to delete all No-Go and Home zones from the map.")
         self.edit_zone_button = self.custom_button(self.control_frame, text="Edit Zones (Move/Resize)", command=self.enable_edit_mode, tooltip="Click to enable edit mode. Drag center of No-Go or Home zones to move them and drag their corners for resizing.")
@@ -143,7 +144,18 @@ class NoGoZoneApp:
         self.bottom_frame = tk.Frame(self.root)
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         
-        self.tooltip = tk.Label(self.root, text="", bg="yellow", fg="black", relief=tk.SOLID, borderwidth=1, font=('TkDefaultFont', 11))
+
+        self.tooltip = tk.Label(
+        self.root,
+        text="",
+        bg="yellow",
+        fg="black",
+        relief=tk.SOLID,
+        borderwidth=1,
+        font=('TkDefaultFont', 11),
+        justify="left",              # Align multiline text to the left
+        wraplength=250               # <-- Set fixed width in pixels
+        )
         self.tooltip.pack_forget()
         
         self.rectangles = []  # Stores rectangle objects
@@ -185,6 +197,7 @@ class NoGoZoneApp:
         button.pack(fill=tk.BOTH, ipady=5, pady=3, padx=10)
         button.bind("<Enter>", lambda e: self.show_tooltip(e, tooltip))
         button.bind("<Leave>", lambda e: self.hide_tooltip())
+        #return buttonImageOps
         return button
     
     def set_active_button(self, button, command):
