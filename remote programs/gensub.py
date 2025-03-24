@@ -1,3 +1,8 @@
+import sys
+x = ['', '/home/ubuntu/turtlebot3_ws/build/turtlebot3_teleop', '/home/ubuntu/turtlebot3_ws/install/turtlebot3_teleop/lib/python3.10/site-packages', '/home/ubuntu/turtlebot3_ws/build/turtlebot3_example', '/home/ubuntu/turtlebot3_ws/install/turtlebot3_example/lib/python3.10/site-packages', '/home/ubuntu/interbotix_ws/install/interbotix_xs_modules/lib/python3.10/site-packages', '/home/ubuntu/interbotix_ws/install/interbotix_xs_msgs/local/lib/python3.10/dist-packages', '/home/ubuntu/interbotix_ws/install/interbotix_rpi_modules/lib/python3.10/site-packages', '/home/ubuntu/interbotix_ws/install/interbotix_rpi_msgs/local/lib/python3.10/dist-packages', '/home/ubuntu/interbotix_ws/install/interbotix_moveit_interface_msgs/local/lib/python3.10/dist-packages', '/home/ubuntu/interbotix_ws/install/interbotix_common_modules/lib/python3.10/site-packages', '/opt/ros/humble/lib/python3.10/site-packages', '/opt/ros/humble/local/lib/python3.10/dist-packages', '/usr/lib/python310.zip', '/usr/lib/python3.10', '/usr/lib/python3.10/lib-dynload', '/home/ubuntu/.local/lib/python3.10/site-packages', '/usr/local/lib/python3.10/dist-packages', '/usr/lib/python3/dist-packages', '/usr/lib/python3.10/dist-packages']
+for i in x:
+	if x not in sys.path:
+		sys.path.append(i)
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
