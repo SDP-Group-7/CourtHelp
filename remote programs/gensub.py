@@ -1,25 +1,20 @@
 import sys
-x = ['', '/home/ubuntu/turtlebot3_ws/build/turtlebot3_teleop', '/home/ubuntu/turtlebot3_ws/install/turtlebot3_teleop/lib/python3.10/site-packages', '/home/ubuntu/turtlebot3_ws/build/turtlebot3_example', '/home/ubuntu/turtlebot3_ws/install/turtlebot3_example/lib/python3.10/site-packages', '/home/ubuntu/interbotix_ws/install/interbotix_xs_modules/lib/python3.10/site-packages', '/home/ubuntu/interbotix_ws/install/interbotix_xs_msgs/local/lib/python3.10/dist-packages', '/home/ubuntu/interbotix_ws/install/interbotix_rpi_modules/lib/python3.10/site-packages', '/home/ubuntu/interbotix_ws/install/interbotix_rpi_msgs/local/lib/python3.10/dist-packages', '/home/ubuntu/interbotix_ws/install/interbotix_moveit_interface_msgs/local/lib/python3.10/dist-packages', '/home/ubuntu/interbotix_ws/install/interbotix_common_modules/lib/python3.10/site-packages', '/opt/ros/humble/lib/python3.10/site-packages', '/opt/ros/humble/local/lib/python3.10/dist-packages', '/usr/lib/python310.zip', '/usr/lib/python3.10', '/usr/lib/python3.10/lib-dynload', '/home/ubuntu/.local/lib/python3.10/site-packages', '/usr/local/lib/python3.10/dist-packages', '/usr/lib/python3/dist-packages', '/usr/lib/python3.10/dist-packages']
-for i in x:
-	if x not in sys.path:
-		sys.path.append(i)
+from multiprocessing.connection import Client
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 import subprocess
 import shutil
 
-from grove.grove_i2c_motor_driver import MotorDriver
-
-from grove.grove_optical_rotary_encoder import GroveOpticalRotaryEncoder
 
 
 class RotorSubscriber(Node):
     def __init__(self, pin=10):
         super().__init__('remote_control_publisher')
         
-        self.motor = MotorDriver()
-        self.encoder = GroveOpticalRotaryEncoder(pin)
+		address = ('localhost', 6000)
+		self.conn = Client(address,)
+        
         self.cam_on = False
         self.cam_process = None
         
@@ -30,7 +25,7 @@ class RotorSubscriber(Node):
         self.camset_subscriber
 
     def set_speed(self, msg):
-        self.motor.set_speed(float(msg.data))
+        self.conn.send(float(msg.data))
 
     def set_cam_status(self, msg):
         if msg.data == "on" and not self.cam_on:
@@ -39,7 +34,8 @@ class RotorSubscriber(Node):
             self.cam_process.kill()
 
     def destroy_node(self):
-        self.motor.set_speed(0)
+		conn.send(0.0)
+		conn.close()
         super().destroy_node()
         self.get_logger().info("Remote node shutting down")
 
