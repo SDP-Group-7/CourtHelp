@@ -5,15 +5,15 @@ from rclpy.node import Node
 from std_msgs.msg import String
 import subprocess
 import shutil
-
+ 
 
 
 class RotorSubscriber(Node):
     def __init__(self, pin=10):
         super().__init__('remote_control_publisher')
         
-		address = ('localhost', 6000)
-		self.conn = Client(address,)
+        address = ('localhost', 6000)
+        self.conn = Client(address,)
         
         self.cam_on = False
         self.cam_process = None
@@ -34,8 +34,8 @@ class RotorSubscriber(Node):
             self.cam_process.kill()
 
     def destroy_node(self):
-		conn.send(0.0)
-		conn.close()
+        conn.send(0.0)
+        conn.close()
         super().destroy_node()
         self.get_logger().info("Remote node shutting down")
 
